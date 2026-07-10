@@ -1,3 +1,30 @@
+{
+  "name": "Ledger HRIS — Employee Portal",
+  "short_name": "Ledger HRIS",
+  "description": "Premierlabs Corporation — Employee Self-Service Portal",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A4F8C",
+  "theme_color": "#0A4F8C",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+
 // Ledger HRIS — Service Worker
 // Caches the app shell for offline/fast loading
 
@@ -52,36 +79,3 @@ self.addEventListener('fetch', event => {
     )
   );
 });
-
-{
-  "name": "Ledger HRIS — Employee Portal",
-  "short_name": "Ledger HRIS",
-  "description": "Premierlabs Corporation — Employee Self-Service Portal",
-  "start_url": "./",
-  "scope": "./",
-  "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0A4F8C",
-  "theme_color": "#0A4F8C",
-  "lang": "en",
-  "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "label": "Employee Login",
-      "form_factor": "narrow"
-    }
-  ]
-}
