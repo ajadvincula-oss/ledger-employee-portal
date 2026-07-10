@@ -149,6 +149,7 @@ input,select,textarea{font-family:inherit;}
 @keyframes popIn{from{opacity:0;transform:scale(0.95);}to{opacity:1;transform:scale(1);}}
 @keyframes shimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.5;}}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
 @keyframes bounce{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}
 @keyframes toastIn{from{opacity:0;transform:translateY(16px) scale(0.95);}to{opacity:1;transform:translateY(0) scale(1);}}
 
@@ -984,7 +985,12 @@ tbody tr:hover{background:var(--cream-dim);}
         <button class="menu-btn" id="menuBtn">☰</button>
         <div><div class="breadcrumb" id="breadcrumb">Module</div><h2 id="pageTitle">Dashboard</h2></div>
       </div>
-      <div class="topbar-actions"></div>
+      <div class="topbar-actions">
+        <div style="display:flex;align-items:center;gap:5px;" title="Live updates status">
+          <div id="live-dot" style="width:8px;height:8px;border-radius:50%;background:#94A3B8;transition:background .5s;flex-shrink:0;"></div>
+          <span style="font-size:10.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;">LIVE</span>
+        </div>
+      </div>
     </div>
     <div class="content" id="content"></div>
   </div>
@@ -999,8 +1005,8 @@ tbody tr:hover{background:var(--cream-dim);}
 // need the link — no config screen needed.
 // Leave empty ('') to show the Connect Database screen.
 // ============================================================
-const BAKED_URL = '';  // e.g. 'https://xxxx.supabase.co'
-const BAKED_KEY = '';  // e.g. 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+const BAKED_URL = 'https://gvywmwzxawvwmblwjxld.supabase.co';
+const BAKED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2eXdtd3p4YXd2d21ibHdqeGxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0NTk1NTcsImV4cCI6MjA5OTAzNTU1N30.bACMAFu0UnGY8MtyK9h9F6HIJPhE9TJldXRWBQEVkUs';
 
 /* ================================================================
    LEDGER HRIS — SUPABASE VERSION
@@ -1085,7 +1091,7 @@ function getOthersValue(id){
   return sel.value==='Others' ? (document.getElementById(id+'_other')?.value.trim()||'Others') : sel.value;
 }
 const S = { // app state
-  view: 'config',
+  view: 'emp-login',
   page: 'dashboard',
   empPage: 'overview',
   admin: null,
@@ -1125,7 +1131,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('backdrop').addEventListener('click', closeSidebar);
   document.getElementById('sidebarClose').addEventListener('click', closeSidebar);
   document.getElementById('menuBtn').addEventListener('click', openSidebar);
-  document.getElementById('logoutBtn').addEventListener('click', () => { S.admin = null; clearSession(); S.view = 'landing'; render(); });
+  document.getElementById('logoutBtn').addEventListener('click', () => { S.admin = null; clearSession(); stopRealtime(); S.view = 'landing'; render(); });
   document.getElementById('modalOverlay').addEventListener('click', e => { if (e.target === document.getElementById('modalOverlay')) closeModal(); });
 
   if (BAKED_URL && BAKED_KEY) { connectDb(true); } else if (saved) { connectDb(true); }
@@ -1180,8 +1186,7 @@ async function connectDb(silent = false) {
     await loadCompanySettings();
 
     // Show brief success state
-    btn.innerHTML = '✓ Connected! Loading…';
-    btn.style.background = 'var(--teal)';
+    if(btn){ btn.innerHTML = '✓ Connected! Loading…'; btn.style.background = 'var(--teal)'; }
     await new Promise(r => setTimeout(r, 700));
 
     // Try to restore previous session
@@ -1199,6 +1204,7 @@ async function connectDb(silent = false) {
     } else {
       S.view = 'landing';
     }
+    startRealtime();
     render();
   } catch (err) {
     let errMsg = err.message || '';
@@ -1235,13 +1241,10 @@ function render() {
   ['configScreen','landingScreen','adminLoginScreen','empLoginScreen','empShell','adminShell']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (S.view === 'config')       { show('configScreen', 'flex'); }
-  else if (S.view === 'landing') { renderLanding(); show('landingScreen', 'flex'); }
-  else if (S.view === 'admin-login') { renderAdminLogin(); show('adminLoginScreen', 'flex'); }
-  else if (S.view === 'emp-login')   { renderEmpLogin(); show('empLoginScreen', 'flex'); }
+  if (S.view === 'emp-login')        { renderEmpLogin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'force-pin')   { renderForcePin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'employee')    { show('empShell', 'flex'); renderEmpShell(); }
-  else if (S.view === 'admin')       { show('adminShell', 'flex'); renderAdminShell(); }
+  else                               { renderEmpLogin(); show('empLoginScreen', 'flex'); }
 }
 
 function show(id, d = 'block') { const el = document.getElementById(id); if (el) el.style.display = d; }
@@ -1378,7 +1381,7 @@ function renderAdminLogin() {
     try {
       const { data, error } = await sb.from('admin_accounts').select('*').eq('username', user).eq('password_hash', pass).maybeSingle();
       if (!data) { S.adminLoginError = 'Incorrect username or password.'; render(); return; }
-      S.admin = data; S.adminLoginError = ''; S.view = 'admin'; S.page = 'dashboard'; saveSession(); render();
+      S.admin = data; S.adminLoginError = ''; S.view = 'admin'; S.page = 'dashboard'; saveSession(); startRealtime(); render();
     } catch(err) { S.adminLoginError = 'Login error: ' + err.message; render(); }
     finally { if (document.getElementById('doAdminLoginBtn')) { btn.disabled=false; btn.innerHTML='Sign In'; } }
   };
@@ -1400,7 +1403,7 @@ function renderEmpLogin() {
       <button class="btn btn-primary" id="doEmpLoginBtn" style="width:100%;justify-content:center;">Login</button>
       <button class="btn btn-outline" id="backEmpBtn" style="width:100%;justify-content:center;margin-top:8px;">Back</button>
     </div>`;
-  document.getElementById('backEmpBtn').addEventListener('click', () => { S.view='landing'; render(); });
+  // Employee portal — no back button needed
   const doLogin = async () => {
     const empId = document.getElementById('el_id').value.trim().toUpperCase();
     const pin = document.getElementById('el_pin').value;
@@ -1413,7 +1416,7 @@ function renderEmpLogin() {
       S.employee = data; S.empLoginError = '';
       S.view = data.must_change_pin ? 'force-pin' : 'employee';
       S.empPage = 'overview';
-      saveSession(); render();
+      saveSession(); startRealtime(); render();
     } catch(err) { S.empLoginError='Login error: ' + err.message; render(); }
     finally { if (document.getElementById('doEmpLoginBtn')) { btn.disabled=false; btn.innerHTML='Login'; } }
   };
@@ -1947,6 +1950,160 @@ function renderFileLink(fileData, fileName){
     return `<span class="dl-file-btn" data-file-data="${fileData.slice(0,20)}" style="font-size:11px;cursor:pointer;" title="${fileName}">⬇ ${fileName.slice(0,12)}</span>`;
   }
   return '';
+}
+
+
+/* ==================== REALTIME ==================== */
+let realtimeChannel = null;
+let realtimeDebounce = {};
+
+function debounceRefresh(key, fn, delay=800) {
+  if (realtimeDebounce[key]) clearTimeout(realtimeDebounce[key]);
+  realtimeDebounce[key] = setTimeout(() => {
+    delete realtimeDebounce[key];
+    fn();
+  }, delay);
+}
+
+function showLiveToast(msg) {
+  // Subtle live update indicator — different from regular toast
+  let el = document.getElementById('live-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'live-toast';
+    el.style.cssText = `
+      position:fixed;bottom:72px;right:20px;
+      background:var(--teal);color:#fff;
+      padding:8px 14px;border-radius:20px;
+      font-size:11.5px;font-weight:600;
+      font-family:'Inter',sans-serif;
+      box-shadow:0 4px 14px rgba(0,0,0,0.2);
+      z-index:8000;opacity:0;transition:opacity .3s;
+      display:flex;align-items:center;gap:6px;
+    `;
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:#fff;display:inline-block;animation:pulse 1s infinite;"></span> ${msg}`;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 2500);
+}
+
+function updateLiveIndicator(connected) {
+  const dot = document.getElementById('live-dot');
+  if (dot) {
+    dot.style.background = connected ? '#2ECC71' : '#E74C3C';
+    dot.title = connected ? 'Live updates active' : 'Reconnecting…';
+  }
+}
+
+function startRealtime() {
+  if (realtimeChannel) {
+    sb.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+
+  realtimeChannel = sb.channel('ledger-hris-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, (payload) => {
+      showLiveToast('Leave updated');
+      debounceRefresh('leave', () => {
+        if (S.view === 'admin' && S.page === 'leave') {
+          const content = document.getElementById('adminContent');
+          if (content) renderLeave(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'leave') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpLeave(content, S.employee);
+        }
+        // Update nav badge for approvers
+        if (S.view === 'employee') renderEmpShell();
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, (payload) => {
+      showLiveToast('Employee record updated');
+      debounceRefresh('employees', () => {
+        if (S.view === 'admin' && S.page === 'employees') {
+          const content = document.getElementById('adminContent');
+          if (content) renderEmployees(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'overview') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpOverview(content, S.employee);
+        }
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'evaluations' }, (payload) => {
+      showLiveToast('Evaluation updated');
+      debounceRefresh('evals', () => {
+        if (S.view === 'admin' && S.page === 'evaluation') {
+          const content = document.getElementById('adminContent');
+          if (content) renderEvaluation(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'evaluation') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpEval(content, S.employee);
+        }
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'violations' }, (payload) => {
+      showLiveToast('Violation record updated');
+      debounceRefresh('viols', () => {
+        if (S.view === 'admin' && S.page === 'violations') {
+          const content = document.getElementById('adminContent');
+          if (content) renderViolations(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'violations') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpViols(content, S.employee);
+        }
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'medical_records' }, (payload) => {
+      showLiveToast('Medical record updated');
+      debounceRefresh('medical', () => {
+        if (S.view === 'admin' && S.page === 'medical') {
+          const content = document.getElementById('adminContent');
+          if (content) renderMedical(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, (payload) => {
+      showLiveToast('Document updated');
+      debounceRefresh('docs', () => {
+        if (S.view === 'admin' && S.page === 'documents') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDocuments(content);
+        }
+        if (S.view === 'employee' && S.empPage === 'documents') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpDocs(content, S.employee);
+        }
+      });
+    })
+    .subscribe((status) => {
+      updateLiveIndicator(status === 'SUBSCRIBED');
+      if (status === 'SUBSCRIBED') console.log('🟢 Ledger HRIS: Realtime connected');
+      if (status === 'CLOSED') console.log('🔴 Ledger HRIS: Realtime disconnected');
+    });
+}
+
+function stopRealtime() {
+  if (realtimeChannel) {
+    sb.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+  updateLiveIndicator(false);
 }
 
 /* ==================== EMPLOYEES ==================== */
@@ -3891,7 +4048,7 @@ async function renderEmpShell() {
     </div>`;
   shell.querySelectorAll('.nav-tab').forEach(btn=>btn.addEventListener('click',()=>{S.empPage=btn.dataset.page;renderEmpShell();}));
   document.getElementById('empLogout').addEventListener('click',()=>{
-    S.employee=null; S._notifShown=false; clearSession(); S.view='landing'; render();
+    S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); S.view='landing'; render();
   });
   const content=document.getElementById('empContent');
   switch(S.empPage){
