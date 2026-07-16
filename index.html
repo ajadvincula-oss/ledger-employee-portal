@@ -1006,19 +1006,14 @@ body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inse
     <div class="mark" id="landingMark">Ledger <small>HRIS</small></div>
     <div class="sub">Human Resources Information System</div>
   </div>
-  <div class="landing-cards">
+  <div class="landing-cards" style="justify-content:center;">
     <div class="landing-card">
       <div class="landing-tab">HR / ADMIN</div>
       <h3>HR & Admin Portal</h3>
       <p>Manage employees, leave approvals, evaluations, violations, and 201 files.</p>
       <button class="btn btn-primary" id="goAdminBtn" style="width:100%;justify-content:center;">Admin Login →</button>
     </div>
-    <div class="landing-card">
-      <div class="landing-tab">EMPLOYEE</div>
-      <h3>Employee Self-Service</h3>
-      <p>View your profile, file leave requests, track evaluations and documents.</p>
-      <button class="btn btn-primary" id="goEmpBtn" style="width:100%;justify-content:center;">Employee Login →</button>
-    </div>
+
   </div>
 </div>
 
@@ -1080,11 +1075,12 @@ const BAKED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIs
 const CFG_KEY = 'ledger_hris_sb_config';
 const DOC_TYPES = ['Resume / CV','Government-Issued ID','Birth Certificate','NBI Clearance','SSS / PhilHealth / Pag-IBIG Numbers','TIN ID / TIN Number','Employment Contract','Medical Certificate','Diploma / Transcript of Records','2x2 ID Photo'];
 const DEPARTMENTS = ['Operations','Sales & Marketing','Finance','Human Resources','Production','IT','Logistics','Accounting','Engineering','Legal','Marketing','Procurement','Security'];
+const JOB_STATUSES = ['Probationary','Regular','Contractual','Project-based','Seasonal','Consultant'];
 const MOVEMENT_TYPES = ['Hired','Regularization','Promotion','Transfer','Demotion','Department Change','Role Change','Resigned','Terminated','Retired','End of Contract'];
 const LEAVE_TYPES = ['Vacation Leave','Sick Leave','Emergency Leave','Bereavement Leave','Maternity Leave','Paternity Leave','Birthday Leave'];
 const NON_DEDUCTIBLE_LEAVE_TYPES = ['Birthday Leave','Bereavement Leave','Maternity Leave','Paternity Leave'];
 const CIVIL_STATUSES = ['Single','Married','Widowed','Separated','Annulled','Live-in'];
-const MODULES = ['Dashboard','Employees','Leave','Evaluation','Violations','Documents','Employment History','Medical Records','Settings'];
+const MODULES = ['Dashboard','Employees','Attendance','Leave','Evaluation','Violations','Documents','Employment History','Medical Records','Settings'];
 
 const MEDICAL_CATEGORIES = [
   {name:'Pre-employment Medical Exam', validity_months:12, icon:'🏥'},
@@ -1156,7 +1152,7 @@ function getOthersValue(id){
 }
 const S = { // app state
   view: 'config',
-  defaultView: 'emp-login',
+  defaultView: 'landing',
   page: 'dashboard',
   empPage: 'overview',
   admin: null,
@@ -1167,6 +1163,9 @@ const S = { // app state
   workLat: null,
   workLng: null,
   workRadius: 100,
+  attSearch: '',
+  attDateFilter: '',
+  otSearch: '',
   adminLoginError: '',
   empLoginError: '',
   empSearch: '',
@@ -1246,7 +1245,7 @@ function saveSession() {
       view: S.view,
       page: S.page,
       empPage: S.empPage,
-      admin: S.admin ? {id:S.admin.id, username:S.admin.username, name:S.admin.name, role:S.admin.role, modules:S.admin.modules} : null,
+      admin: S.admin ? {id:S.admin.id, username:S.admin.username, name:S.admin.name, role:S.admin.role, modules:S.admin.modules, photo:S.admin.photo} : null,
       employee: S.employee ? {id:S.employee.id, full_name:S.employee.full_name, department:S.employee.department, position:S.employee.position, photo:S.employee.photo, prorated_leave:S.employee.prorated_leave, birth_date:S.employee.birth_date, hire_date:S.employee.hire_date, pin:S.employee.pin, must_change_pin:S.employee.must_change_pin} : null,
       ts: Date.now()
     };
@@ -1343,10 +1342,19 @@ function render() {
   ['configScreen','landingScreen','adminLoginScreen','empLoginScreen','empShell','adminShell']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (S.view === 'emp-login')        { renderEmpLogin(); show('empLoginScreen', 'flex'); }
+  if (S.view === 'config')       { show('configScreen', 'flex'); }
+  else if (S.view === 'landing') {
+    renderLanding(); show('landingScreen', 'flex');
+    setTimeout(() => {
+      document.getElementById('goAdminBtn')?.addEventListener('click', () => { S.view = 'admin-login'; render(); });
+      document.getElementById('goEmpBtn')?.addEventListener('click', () => { S.view = 'emp-login'; render(); });
+    }, 50);
+  }
+  else if (S.view === 'admin-login') { renderAdminLogin(); show('adminLoginScreen', 'flex'); }
+  else if (S.view === 'emp-login')   { renderEmpLogin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'force-pin')   { renderForcePin(); show('empLoginScreen', 'flex'); }
   else if (S.view === 'employee')    { show('empShell', 'flex'); renderEmpShell(); }
-  else                               { renderEmpLogin(); show('empLoginScreen', 'flex'); }
+  else if (S.view === 'admin')       { show('adminShell', 'flex'); renderAdminShell(); }
 }
 
 function show(id, d = 'block') { const el = document.getElementById(id); if (el) el.style.display = d; }
@@ -1374,6 +1382,12 @@ function fmtTimeStr(t) { // formats 'HH:MM' 24hr string to 12hr AM/PM
 function fmtTimeRange(start, end) {
   if (!start || !end) return '—';
   return fmtTimeStr(start) + ' – ' + fmtTimeStr(end);
+}
+function computeWorkedHours(timeIn, timeOut) {
+  if (!timeIn || !timeOut) return null;
+  const ms = new Date(timeOut) - new Date(timeIn);
+  if (ms <= 0) return null;
+  return Math.round((ms / 3600000) * 100) / 100; // hours, 2 decimal places
 }
 function todayStr() { return new Date().toISOString().slice(0,10); }
 // Haversine formula — distance in meters between two lat/lng points
@@ -1649,6 +1663,7 @@ function renderForcePin() {
 /* ==================== ADMIN SHELL ==================== */
 const NAV = [
   {key:'dashboard',label:'Dashboard'},{key:'employees',label:'Employees'},
+  {key:'attendance',label:'Attendance'},
   {key:'leave',label:'Leave'},
   {key:'evaluation',label:'Evaluation'},{key:'violations',label:'Violations'},
   {key:'documents',label:'Documents'},{key:'emphistory',label:'Employment History'},
@@ -1662,7 +1677,11 @@ function renderAdminShell() {
     ${S.logo ? `<img src="${S.logo}" style="height:44px;object-fit:contain;margin-bottom:12px;filter:brightness(1.15) drop-shadow(0 2px 8px rgba(255,255,255,0.2));">` : ''}
     <div class="mark">${S.company||'Ledger'} <small>HRIS</small></div>
     <div class="sub">HUMAN RESOURCES</div>
-    ${S.admin ? `<div style="margin-top:8px;font-size:11px;color:rgba(140,165,190,0.8);font-family:'JetBrains Mono',monospace;">👤 ${S.admin.name}</div>` : ''}`;
+    ${S.admin ? `<button id="sidebarMyAccountBtn" type="button" style="all:unset;cursor:pointer;margin-top:10px;display:flex;align-items:center;gap:8px;padding:6px 8px;margin-left:-8px;border-radius:6px;transition:background .15s;width:calc(100% + 8px);box-sizing:border-box;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'">
+      ${S.admin.photo?`<img src="${S.admin.photo}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0;">`:`<span style="font-size:13px;">👤</span>`}
+      <span style="font-size:11px;color:rgba(200,215,230,0.9);font-family:'JetBrains Mono',monospace;text-align:left;">${S.admin.name}<br><span style="color:rgba(140,165,190,0.6);font-size:9.5px;">Edit profile & password →</span></span>
+    </button>` : ''}`;
+  document.getElementById('sidebarMyAccountBtn')?.addEventListener('click', () => { S.page='settings'; closeSidebar(); renderAdminShell(); });
 
   const allowedModules = S.admin?.role==='Super Admin' ? MODULES
     : (S.admin?.modules ? S.admin.modules.split(',') : MODULES);
@@ -1678,7 +1697,7 @@ function renderAdminShell() {
     S.page = btn.dataset.page; closeSidebar(); renderAdminShell();
   }));
 
-  const titles = {dashboard:['Dashboard','Dashboard'],employees:['Records','Employees'],leave:['Requests','Leave'],evaluation:['Performance','Evaluation'],violations:['Disciplinary Records','Violations'],documents:['201 File Tracker','Documents'],emphistory:['Movement Records','Employment History'],medical:['Health Records','Medical Records'],settings:['Configuration','Settings']};
+  const titles = {dashboard:['Dashboard','Dashboard'],employees:['Records','Employees'],attendance:['Time Logs','Attendance'],leave:['Requests','Leave'],evaluation:['Performance','Evaluation'],violations:['Disciplinary Records','Violations'],documents:['201 File Tracker','Documents'],emphistory:['Movement Records','Employment History'],medical:['Health Records','Medical Records'],settings:['Configuration','Settings']};
   const t = titles[S.page]||['',''];
   document.getElementById('breadcrumb').textContent = t[0];
   document.getElementById('pageTitle').textContent = t[1];
@@ -1688,6 +1707,7 @@ function renderAdminShell() {
   switch(S.page) {
     case 'dashboard':  renderDashboard(content); break;
     case 'employees':  renderEmployees(content); break;
+    case 'attendance': renderAttendance(content); break;
     case 'leave':      renderLeave(content); break;
     case 'evaluation': renderEvaluation(content); break;
     case 'violations': renderViolations(content); break;
@@ -1705,16 +1725,30 @@ async function renderDashboard(content) {
   const today = new Date();
   const sixMonthsAgo = new Date(today); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   const ninetyDaysFromNow = new Date(today); ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
+  const todayISOStr = today.toISOString().slice(0,10);
+  const sevenDaysAgoStr = new Date(Date.now()-6*24*60*60*1000).toISOString().slice(0,10);
 
-  const [empRes, leaveRes, evalRes, violRes, allEvalRes] = await Promise.all([
+  const [empRes, leaveRes, evalRes, violRes, allEvalRes, attRes, otRes, att7Res, leaveWeekRes] = await Promise.all([
     sb.from('employees').select('*').eq('status','Active'),
     sb.from('leave_requests').select('*').or("status.in.(Pending Supervisor,Pending HR),cancellation_status.in.(Pending Approver,Pending HR)").order('filed_on',{ascending:false}),
     sb.from('evaluations').select('emp_id,rating'),
     sb.from('violations').select('id'),
-    sb.from('evaluations').select('emp_id')
+    sb.from('evaluations').select('emp_id'),
+    sb.from('attendance_logs').select('emp_id').eq('log_date', todayISOStr),
+    sb.from('ot_requests').select('id,emp_name,hours,ot_date,status').in('status',['Pending Supervisor','Pending HR']),
+    sb.from('attendance_logs').select('emp_id,log_date').gte('log_date', sevenDaysAgoStr),
+    sb.from('leave_requests').select('emp_id,start_date,end_date').eq('status','Approved').lte('start_date', todayISOStr).or(`end_date.gte.${sevenDaysAgoStr},end_date.is.null`)
   ]);
 
   const emps=empRes.data||[], pendingLeaves=leaveRes.data||[], evals=evalRes.data||[], viols=violRes.data||[], allEvals=allEvalRes.data||[];
+  const approvedLeavesWeek = leaveWeekRes.data||[];
+  const isOnLeaveOnDate = (empId, dateStr) => approvedLeavesWeek.some(l => l.emp_id===empId && l.start_date<=dateStr && (l.end_date||l.start_date)>=dateStr);
+  const loggedTodayIds = new Set((attRes.data||[]).map(l=>l.emp_id));
+  const onLeaveTodayEmps = emps.filter(e=>!loggedTodayIds.has(e.id) && isOnLeaveOnDate(e.id, todayISOStr));
+  const onLeaveTodayIds = new Set(onLeaveTodayEmps.map(e=>e.id));
+  const noLogToday = emps.filter(e=>!loggedTodayIds.has(e.id) && !onLeaveTodayIds.has(e.id));
+  const pendingOT = otRes.data||[];
+  const att7Days = att7Res.data||[];
   const avgRating=evals.length?(evals.reduce((s,e)=>s+(parseFloat(e.rating)||0),0)/evals.length).toFixed(1):'—';
   const deptMap={};
   emps.forEach(e=>{ deptMap[e.department]=(deptMap[e.department]||0)+1; });
@@ -1775,6 +1809,25 @@ async function renderDashboard(content) {
     .in('cancellation_status',['Pending Approver','Pending HR'])).data||[] : [];
 
   const alerts = [
+    {
+      key:'ot',
+      icon:'🕐',
+      color:'var(--gold)',
+      bg:'var(--gold-bg)',
+      border:'var(--gold-border)',
+      label:'Pending OT Requests',
+      count:pendingOT.length,
+      subtitle:'Awaiting supervisor or HR approval',
+      items:pendingOT.slice(0,5),
+      renderItem: o=>`<div class="alert-item">
+        <div class="alert-item-info">
+          <strong>${o.emp_name}</strong>
+          <span>${o.hours} hr(s) · ${fmtDate(o.ot_date)} · <span class="badge ${otStatusBadge(o.status)}" style="font-size:10px;">${o.status}</span></span>
+        </div>
+      </div>`,
+      action: `onclick="document.querySelector('.nav-tab[data-page=attendance]').click()"`,
+      actionLabel:'Go to Attendance →'
+    },
     {
       key:'leave',
       icon:'📋',
@@ -1929,6 +1982,12 @@ async function renderDashboard(content) {
     <div class="chart-grid">
       <div class="chart-card"><h3>Employees by Department</h3><div class="chart-wrap"><canvas id="deptChart"></canvas></div></div>
       <div class="chart-card"><h3>Employment Status</h3><div class="chart-wrap" style="height:200px;"><canvas id="statusChart"></canvas></div></div>
+    </div>
+
+    <div class="section-label" style="margin-top:24px;">Attendance</div>
+    <div class="chart-grid">
+      <div class="chart-card"><h3>Attendance — Last 7 Days</h3><div class="chart-wrap"><canvas id="attChart"></canvas></div></div>
+      <div class="chart-card"><h3>Today's Attendance</h3><div class="chart-wrap" style="height:200px;"><canvas id="attTodayChart"></canvas></div></div>
     </div>`;
 
   // Wire nav buttons
@@ -1950,6 +2009,85 @@ async function renderDashboard(content) {
     type:'doughnut',
     data:{labels:Object.keys(statusMap),datasets:[{data:Object.values(statusMap),backgroundColor:['#1470BB','#94A3B8','#E67E00'],borderWidth:0,hoverOffset:6}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:14,font:{size:12}}}},cutout:'65%'}
+  });
+
+  // Attendance — last 7 days stacked bar chart (Present / On Leave / No Log)
+  const dayLabels = [], presentCounts = [], onLeaveCounts = [], noLogCounts = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const dStr = d.toISOString().slice(0,10);
+    dayLabels.push(d.toLocaleDateString('en-US', {month:'short', day:'numeric'}));
+    const loggedIdsForDay = new Set(att7Days.filter(l => l.log_date === dStr).map(l=>l.emp_id));
+    const onLeaveForDay = emps.filter(e => !loggedIdsForDay.has(e.id) && isOnLeaveOnDate(e.id, dStr)).length;
+    presentCounts.push(loggedIdsForDay.size);
+    onLeaveCounts.push(onLeaveForDay);
+    noLogCounts.push(Math.max(0, emps.length - loggedIdsForDay.size - onLeaveForDay));
+  }
+  new Chart(document.getElementById('attChart'),{
+    type:'bar',
+    data:{labels:dayLabels,datasets:[
+      {label:'Present',data:presentCounts,backgroundColor:'#0E7A6B',borderRadius:4,borderSkipped:false},
+      {label:'On Leave',data:onLeaveCounts,backgroundColor:'#E67E00',borderRadius:4,borderSkipped:false},
+      {label:'No Log',data:noLogCounts,backgroundColor:'#C0392B',borderRadius:4,borderSkipped:false}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11},boxWidth:12}}},
+      scales:{y:{beginAtZero:true,stacked:true,ticks:{stepSize:1},grid:{color:'rgba(0,0,0,0.04)'}},x:{stacked:true,grid:{display:false}}}
+    }
+  });
+
+  // Today's attendance doughnut
+  const presentToday = loggedTodayIds.size;
+  const onLeaveToday = onLeaveTodayEmps.length;
+  const absentToday = noLogToday.length;
+  const presentEmpsToday = emps.filter(e=>loggedTodayIds.has(e.id));
+  const attendanceRatePct = emps.length ? Math.round((presentToday / emps.length) * 100) : 0;
+  new Chart(document.getElementById('attTodayChart'),{
+    type:'doughnut',
+    data:{labels:['Present','On Leave','No Log Yet'],datasets:[{data:[presentToday,onLeaveToday,absentToday],backgroundColor:['#0E7A6B','#E67E00','#C0392B'],borderWidth:0,hoverOffset:6}]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'bottom',labels:{padding:14,font:{size:12}}},
+        tooltip:{callbacks:{label:ctx=>{
+          const total = emps.length||1;
+          const pct = Math.round((ctx.parsed/total)*100);
+          return `${ctx.label}: ${ctx.parsed} (${pct}%)`;
+        }}}
+      },
+      cutout:'60%',
+      onHover:(evt,elements)=>{ evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+      onClick:(evt,elements)=>{
+        if(!elements.length) return;
+        const idx = elements[0].index;
+        const category = ['Present','On Leave','No Log Yet'][idx];
+        const list = idx===0 ? presentEmpsToday : idx===1 ? onLeaveTodayEmps : noLogToday;
+        openModal(`
+          <div class="modal-tab-label">${category.toUpperCase()} TODAY</div>
+          <div class="modal-head"><div><h3>${category}</h3><div class="sub">${fmtDate(todayISOStr)} · ${list.length} employee(s)</div></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+          <div class="modal-body">
+            ${list.length===0?`<p style="color:var(--muted);font-size:13px;">No employees in this category.</p>`:`
+            <ul class="doc-checklist">${list.map(e=>`<li><span>${e.full_name}</span><span style="color:var(--muted);font-size:12px;">${e.department||'—'}</span></li>`).join('')}</ul>`}
+          </div>
+          <div class="modal-foot"><button class="btn btn-primary" id="closeAttListBtn">Close</button></div>`);
+        document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+        document.getElementById('closeAttListBtn').addEventListener('click',closeModal);
+      }
+    },
+    plugins:[{
+      id:'attCenterText',
+      afterDraw(chart){
+        const {ctx,chartArea:{width,height,left,top}} = chart;
+        ctx.save();
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font='700 22px Fraunces, serif'; ctx.fillStyle='#0A2540';
+        ctx.fillText(attendanceRatePct+'%', left+width/2, top+height/2-8);
+        ctx.font='600 10px JetBrains Mono, monospace'; ctx.fillStyle='#5A7A9A';
+        ctx.fillText('PRESENT', left+width/2, top+height/2+12);
+        ctx.restore();
+      }
+    }]
   });
 }
 
@@ -2064,18 +2202,27 @@ async function refreshEHTable(content) {
   if (!tbody) { renderEmpHistory(content); return; }
   tbody.innerHTML = list.length===0
     ? `<tr><td colspan="9"><div class="empty-state"><h4>No records found</h4></div></td></tr>`
-    : list.map(r=>`<tr>
+    : list.map(r=>`<tr data-id="${r.id}" style="cursor:pointer;">
         <td class="mono">${r.emp_id}</td><td><strong>${r.emp_name||'—'}</strong></td>
         <td class="mono">${fmtDate(r.effective_date)}</td><td><span class="badge badge-active">${r.movement_type||'—'}</span></td>
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
         <td>${r.approved_by||'—'}</td><td style="color:var(--muted);">${r.remarks||'—'}</td>
         <td style="white-space:nowrap;">
+          ${r.file_name?(r.file_name.startsWith('gdrive:')?`<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eh-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eh-btn" data-id="${r.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eh-btn" data-id="${r.id}">Delete</button>
         </td>
       </tr>`).join('');
-  tbody.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',()=>openEHForm(btn.dataset.id,content)));
-  tbody.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  tbody.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
+  tbody.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  tbody.querySelectorAll('.dl-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:r}=await sb.from('employment_history').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!r?.file_data) return;
+    const a=document.createElement('a'); a.href=r.file_data; a.download=r.file_name||'employment_record';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }));
+  tbody.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
 function leaveStatusBadge(s){
@@ -2215,6 +2362,14 @@ function startRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_logs' }, (payload) => {
       showLiveToast('Attendance updated');
       debounceRefresh('attendance', () => {
+        if (S.view === 'admin' && S.page === 'attendance') {
+          const content = document.getElementById('adminContent');
+          if (content) renderAttendance(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
         if (S.view === 'employee' && S.empPage === 'attendance') {
           const content = document.getElementById('empContent');
           if (content && S.employee) renderEmpAttendance(content, S.employee);
@@ -2224,6 +2379,14 @@ function startRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_requests' }, (payload) => {
       showLiveToast('OT request updated');
       debounceRefresh('ot', () => {
+        if (S.view === 'admin' && S.page === 'attendance') {
+          const content = document.getElementById('adminContent');
+          if (content) renderAttendance(content);
+        }
+        if (S.view === 'admin' && S.page === 'dashboard') {
+          const content = document.getElementById('adminContent');
+          if (content) renderDashboard(content);
+        }
         if (S.view === 'employee' && S.empPage === 'attendance') {
           const content = document.getElementById('empContent');
           if (content && S.employee) renderEmpAttendance(content, S.employee);
@@ -2432,6 +2595,7 @@ async function openEmpProfile(empId) {
       </div>
       <div class="tab-panel active" data-panel="overview">
         <div class="detail-row"><span class="k">Status</span><span class="v"><span class="badge ${badgeClass(emp.status)}">${emp.status}</span></span></div>
+        <div class="detail-row"><span class="k">Job Status</span><span class="v">${emp.job_status||'—'}</span></div>
         <div class="detail-row"><span class="k">Email</span><span class="v">${emp.email||'—'}</span></div>
         <div class="detail-row"><span class="k">Phone</span><span class="v mono">${emp.phone||'—'}</span></div>
         <div class="detail-row"><span class="k">Address</span><span class="v" style="max-width:280px;text-align:right;">${emp.address||'—'}</span></div>
@@ -2440,6 +2604,10 @@ async function openEmpProfile(empId) {
         <div class="detail-row"><span class="k">Civil Status</span><span class="v">${emp.civil_status||'—'}</span></div>
         <div class="detail-row"><span class="k">Hire Date</span><span class="v mono">${fmtDate(emp.hire_date)}</span></div>
         <div class="detail-row"><span class="k">Tenure</span><span class="v">${tenure} years</span></div>
+        <div class="detail-row"><span class="k">SSS Number</span><span class="v mono">${emp.sss_number||'—'}</span></div>
+        <div class="detail-row"><span class="k">PhilHealth Number</span><span class="v mono">${emp.philhealth_number||'—'}</span></div>
+        <div class="detail-row"><span class="k">Pag-IBIG Number</span><span class="v mono">${emp.pagibig_number||'—'}</span></div>
+        <div class="detail-row"><span class="k">TIN</span><span class="v mono">${emp.tin_number||'—'}</span></div>
         <div class="detail-row"><span class="k">Emergency Contact</span><span class="v" style="max-width:280px;text-align:right;">${emp.emergency_contact_name||emp.emergency_contact||'—'}${emp.emergency_contact_relation?' ('+emp.emergency_contact_relation+')':''}</span></div>
         ${emp.emergency_contact_phone?`<div class="detail-row"><span class="k">Contact Number</span><span class="v mono">${emp.emergency_contact_phone}</span></div>`:''}
         <div class="detail-row"><span class="k">Prorated Leave</span><span class="v">${remaining} / ${emp.prorated_leave||S.proratedDefault} days remaining</span></div>
@@ -2525,6 +2693,7 @@ async function openEmpForm(empId, content) {
         ${!emp?`<div id="f_id_msg" style="font-size:11px;color:var(--muted);margin-top:4px;">Suggested ID based on existing records. You can change this.</div>`:''}
       </div>
       <div class="field"><label>Status</label><select id="f_status">${['Active','Inactive','On Leave'].map(s=>`<option ${emp?.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Job Status</label>${withOthers('f_jobstatus', JOB_STATUSES, emp?.job_status||'Probationary')}</div>
       <div class="field"><label>First Name</label><input type="text" id="f_first" value="${emp?.first_name||''}" placeholder="First name"></div>
       <div class="field"><label>Last Name</label><input type="text" id="f_last" value="${emp?.last_name||''}" placeholder="Last name"></div>
       <div class="field"><label>Department</label>${withOthers('f_dept', DEPARTMENTS, emp?.department||'')}</div>
@@ -2537,11 +2706,14 @@ async function openEmpForm(empId, content) {
       <div class="field"><label>Email</label><input type="email" id="f_email" value="${emp?.email||''}" placeholder="email@company.com"></div>
       <div class="field"><label>Phone</label><input type="text" id="f_phone" value="${emp?.phone||''}" placeholder="09xxxxxxxxx"></div>
       <div class="field field-full"><label>Address</label><input type="text" id="f_addr" value="${emp?.address||''}" placeholder="Street, City, Province"></div>
+      <div class="section-label" style="grid-column:1/-1;margin:4px 0 0;font-size:11px;">GOVERNMENT IDs</div>
+      <div class="field"><label>SSS Number</label><input type="text" id="f_sss" value="${emp?.sss_number||''}" placeholder="e.g. 34-1234567-8"></div>
+      <div class="field"><label>PhilHealth Number</label><input type="text" id="f_philhealth" value="${emp?.philhealth_number||''}" placeholder="e.g. 12-345678901-2"></div>
+      <div class="field"><label>Pag-IBIG Number</label><input type="text" id="f_pagibig" value="${emp?.pagibig_number||''}" placeholder="e.g. 1234-5678-9012"></div>
+      <div class="field"><label>TIN</label><input type="text" id="f_tin" value="${emp?.tin_number||''}" placeholder="e.g. 123-456-789-000"></div>
       <div class="section-label" style="grid-column:1/-1;margin:4px 0 0;font-size:11px;">EMERGENCY CONTACT</div>
       <div class="field"><label>Contact Person Name</label><input type="text" id="f_emerg_name" value="${emp?.emergency_contact_name||''}" placeholder="e.g. Maria Santos"></div>
-      <div class="field"><label>Relationship</label><select id="f_emerg_rel">
-        ${['Mother','Father','Spouse','Sibling','Child','Relative','Friend','Other'].map(r=>`<option ${emp?.emergency_contact_relation===r?'selected':''}>${r}</option>`).join('')}
-      </select></div>
+      <div class="field"><label>Relationship</label>${withOthers('f_emerg_rel', ['Mother','Father','Spouse','Sibling','Child','Relative','Friend'], emp?.emergency_contact_relation||'')}</div>
       <div class="field field-full"><label>Contact Number</label><input type="text" id="f_emerg_phone" value="${emp?.emergency_contact_phone||''}" placeholder="09xxxxxxxxx"></div>
       ${!emp?`<div class="field"><label>Initial PIN</label><input type="text" id="f_pin" value="1234" maxlength="8"></div>`:''}
     </div></div>
@@ -2550,6 +2722,8 @@ async function openEmpForm(empId, content) {
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelEmpBtn').addEventListener('click',closeModal);
   wireOthers('f_dept');
+  wireOthers('f_jobstatus');
+  wireOthers('f_emerg_rel');
 
   // Real-time duplicate ID check on input
   if(!emp){
@@ -2589,14 +2763,18 @@ async function openEmpForm(empId, content) {
 
     const payload={id,first_name:first,last_name:last,full_name:`${first} ${last}`,initials:(first[0]+last[0]).toUpperCase(),
       department:getOthersValue('f_dept'), position:document.getElementById('f_pos').value.trim(),
-      status:document.getElementById('f_status').value, hire_date:document.getElementById('f_hire').value||null,
+      status:document.getElementById('f_status').value, job_status:getOthersValue('f_jobstatus'), hire_date:document.getElementById('f_hire').value||null,
       birth_date:document.getElementById('f_birth').value||null, gender:document.getElementById('f_gender').value,
       civil_status:document.getElementById('f_civil').value,
       prorated_leave:parseInt(document.getElementById('f_leave').value)||S.proratedDefault,
       email:document.getElementById('f_email').value.trim()||null, phone:document.getElementById('f_phone').value.trim()||null,
       address:document.getElementById('f_addr').value.trim()||null,
+      sss_number:document.getElementById('f_sss').value.trim()||null,
+      philhealth_number:document.getElementById('f_philhealth').value.trim()||null,
+      pagibig_number:document.getElementById('f_pagibig').value.trim()||null,
+      tin_number:document.getElementById('f_tin').value.trim()||null,
       emergency_contact_name:document.getElementById('f_emerg_name').value.trim()||null,
-      emergency_contact_relation:document.getElementById('f_emerg_rel').value||null,
+      emergency_contact_relation:getOthersValue('f_emerg_rel')||null,
       emergency_contact_phone:document.getElementById('f_emerg_phone').value.trim()||null,
       updated_at:new Date().toISOString()};
     if(!emp) { payload.pin=document.getElementById('f_pin')?.value||'1234'; payload.must_change_pin=false; }
@@ -2610,6 +2788,193 @@ async function openEmpForm(empId, content) {
     if(!emp) { await sb.from('documents').insert(DOC_TYPES.map(d=>({emp_id:id,doc_name:d,status:'Missing'}))); }
     closeModal(); toast(emp?'Employee updated.':'Employee added successfully.'); renderEmployees(content);
   });
+}
+
+/* ==================== ATTENDANCE ==================== */
+async function renderAttendance(content) {
+  loading(content);
+  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
+
+  let logQ = sb.from('attendance_logs').select('*').order('log_date',{ascending:false}).order('time_in',{ascending:false});
+  let otQ = sb.from('ot_requests').select('*').order('ot_date',{ascending:false});
+  let pcQ = sb.from('presence_checks').select('*');
+  if (S.attSearch) { logQ = logQ.ilike('emp_name', `%${S.attSearch}%`); otQ = otQ.ilike('emp_name', `%${S.attSearch}%`); pcQ = pcQ.ilike('emp_name', `%${S.attSearch}%`); }
+  if (S.attDateFilter) { logQ = logQ.eq('log_date', S.attDateFilter); otQ = otQ.eq('ot_date', S.attDateFilter); pcQ = pcQ.eq('log_date', S.attDateFilter); }
+
+  const [{data:logs}, {data:ots}, {data:presenceChecks}] = await Promise.all([logQ, otQ, pcQ]);
+  const logList = logs||[];
+  const otList = ots||[];
+  const pcList = presenceChecks||[];
+
+  // Merge attendance logs with OT requests by employee + date, so overtime
+  // shows inline in the same row as the time in/out for that day.
+  const rowMap = new Map();
+  logList.forEach(l => {
+    const key = `${l.emp_id}|${l.log_date}`;
+    const checksForRow = pcList.filter(c=>c.emp_id===l.emp_id && c.log_date===l.log_date);
+    rowMap.set(key, { ...l, ot: null, checks: checksForRow });
+  });
+  otList.forEach(o => {
+    const key = `${o.emp_id}|${o.ot_date}`;
+    if (rowMap.has(key)) { rowMap.get(key).ot = o; }
+    else { rowMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, time_in_distance_m:null, time_out_distance_m:null, ot:o, checks:[] }); }
+  });
+  const list = Array.from(rowMap.values()).sort((a,b)=> (b.log_date||'').localeCompare(a.log_date||''));
+
+  content.innerHTML = `
+    <div class="page-header"><p class="desc">Real-time employee time in/out logs, verified by GPS location, plus overtime request approvals.</p></div>
+    ${!hasWorkLoc ? `<div class="note-banner">⚠️ No work location has been set yet. Go to <strong>Settings</strong> to set the office coordinates — employees cannot time in/out until this is configured.</div>` : ''}
+    <div class="toolbar">
+      <div class="toolbar-left" style="flex:1;flex-wrap:wrap;">
+        <div class="search-box" style="min-width:200px;"><span class="mono" style="font-size:13px;">&#8981;</span><input type="text" id="attSearch" placeholder="Search employee…" value="${S.attSearch||''}"></div>
+        <input type="date" id="attDateFilter" class="select-filter" value="${S.attDateFilter||''}">
+        <span class="mono" style="font-size:12px;color:var(--muted);">${list.length} record(s)</span>
+      </div>
+      <button class="btn btn-outline" id="exportAttBtn">⬇ Export CSV</button>
+    </div>
+    ${list.length===0?`<div class="empty-state"><h4>No attendance logs found</h4><p>Time-in records will appear here once employees start logging attendance.</p></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th><th>Hours Worked</th><th>Overtime</th><th>Selfie</th><th>Location Check</th></tr></thead>
+      <tbody>${list.map(l=>`<tr>
+        <td><strong>${l.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${l.emp_id}</span></td>
+        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${l.time_in?fmtTime12(l.time_in):'—'}</td>
+        <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
+        <td>${l.time_in?`<span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span>`:'—'}</td>
+        <td class="mono">${computeWorkedHours(l.time_in,l.time_out)!=null?computeWorkedHours(l.time_in,l.time_out)+' hr(s)':'—'}</td>
+        <td style="white-space:nowrap;">
+          ${!l.ot ? `<span style="font-size:11px;color:var(--muted);">—</span>` : `
+            <div style="font-size:12px;">${l.ot.hours} hr(s)${l.ot.start_time&&l.ot.end_time?` · ${fmtTimeRange(l.ot.start_time,l.ot.end_time)}`:''}</div>
+            <span class="badge ${otStatusBadge(l.ot.status)}" style="font-size:10px;">${l.ot.status}</span>
+            ${l.ot.status==='Rejected'&&l.ot.rejection_reason?`<div style="font-size:10.5px;color:var(--rose);margin-top:2px;">${l.ot.rejection_reason}</div>`:''}
+            <div style="margin-top:4px;">
+              ${(l.ot.status==='Pending HR') || (l.ot.status==='Pending Supervisor' && !l.ot.supervisor_id)
+                ? `<button class="btn btn-primary btn-sm hr-approve-ot-btn" data-id="${l.ot.id}" style="font-size:10.5px;padding:3px 8px;">✓ Approve</button>
+                   <button class="btn btn-danger btn-sm reject-ot-btn" data-id="${l.ot.id}" style="font-size:10.5px;padding:3px 8px;">✕ Reject</button>`
+                : l.ot.status==='Pending Supervisor'
+                ? `<span style="font-size:10.5px;color:var(--muted);font-style:italic;">⏳ Awaiting approver</span>`
+                : ''
+              }
+            </div>`}
+        </td>
+        <td style="white-space:nowrap;">
+          ${l.time_in_photo?`<img src="${l.time_in_photo}" class="att-selfie-thumb" data-photo="${l.time_in_photo}" data-name="${l.emp_name} — Time In" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--line-strong);margin-right:4px;">`:''}
+          ${l.time_out_photo?`<img src="${l.time_out_photo}" class="att-selfie-thumb" data-photo="${l.time_out_photo}" data-name="${l.emp_name} — Time Out" style="width:32px;height:32px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--line-strong);">`:''}
+          ${!l.time_in_photo && !l.time_out_photo?`<span style="font-size:11px;color:var(--muted);">—</span>`:''}
+        </td>
+        <td style="font-size:11.5px;color:var(--muted);">
+          ${l.time_in_distance_m!=null?`In: ${Math.round(l.time_in_distance_m)}m from office`:''}
+          ${l.time_out_distance_m!=null?`<br>Out: ${Math.round(l.time_out_distance_m)}m from office`:''}
+          ${(() => {
+            const awayMin = computeAwayMinutes(l.checks);
+            if (!l.checks || l.checks.length===0) return '';
+            const badgeColor = awayMin>=120 ? 'var(--rose)' : awayMin>0 ? 'var(--gold)' : 'var(--teal)';
+            const badgeBg = awayMin>=120 ? 'var(--rose-bg)' : awayMin>0 ? 'var(--gold-bg)' : 'var(--teal-bg)';
+            const hrs = Math.floor(awayMin/60), mins = awayMin%60;
+            const label = awayMin>0 ? `⚠ Away ~${hrs>0?hrs+'h ':''}${mins}m` : '✓ Stayed in range';
+            return `<div style="margin-top:4px;">
+              <button class="btn btn-outline btn-sm view-presence-btn" data-empid="${l.emp_id}" data-date="${l.log_date}" style="font-size:10px;padding:2px 7px;background:${badgeBg};color:${badgeColor};border-color:${badgeColor};">${label} · ${l.checks.length} check(s)</button>
+            </div>`;
+          })()}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+
+  let attSearchTimer;
+  document.getElementById('attSearch').addEventListener('input',e=>{S.attSearch=e.target.value; clearTimeout(attSearchTimer); attSearchTimer=setTimeout(()=>renderAttendance(content),300);});
+  content.querySelectorAll('.att-selfie-thumb').forEach(img=>img.addEventListener('click',()=>openPhotoLightbox(img.dataset.photo,img.dataset.name)));
+  content.querySelectorAll('.view-presence-btn').forEach(btn=>btn.addEventListener('click', async()=>{
+    const {data:checks} = await sb.from('presence_checks').select('*').eq('emp_id',btn.dataset.empid).eq('log_date',btn.dataset.date).order('checked_at',{ascending:true});
+    const list = checks||[];
+    const awayMin = computeAwayMinutes(list);
+    const hrs = Math.floor(awayMin/60), mins = awayMin%60;
+    openModal(`
+      <div class="modal-tab-label">LOCATION HISTORY</div>
+      <div class="modal-head"><div><h3>Location Checks</h3><div class="sub">${fmtDate(btn.dataset.date)} · checked every ${PRESENCE_CHECK_INTERVAL_MIN} min while clocked in</div></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+      <div class="modal-body">
+        ${awayMin>0?`<div class="note-banner" style="background:var(--rose-bg);border-color:var(--rose-border);color:var(--rose);">⚠️ Estimated time away from office: <strong>${hrs>0?hrs+'h ':''}${mins}m</strong> (based on ${list.filter(c=>!c.within_radius).length} check(s) outside the ${S.workRadius}m radius)</div>`:`<div class="success-banner">✅ Stayed within office radius for all checks that day.</div>`}
+        ${list.length===0?`<p style="color:var(--muted);font-size:13px;">No background location checks were recorded for this day — the employee may not have kept the portal open while clocked in.</p>`:`
+        <div class="table-wrap"><table><thead><tr><th>Time</th><th>Distance from Office</th><th>Status</th></tr></thead>
+        <tbody>${list.map(c=>`<tr>
+          <td class="mono">${fmtTime12(c.checked_at)}</td>
+          <td class="mono">${c.distance_m}m</td>
+          <td><span class="badge ${c.within_radius?'badge-approved':'badge-rejected'}">${c.within_radius?'In range':'Away'}</span></td>
+        </tr>`).join('')}</tbody></table></div>`}
+      </div>
+      <div class="modal-foot"><button class="btn btn-primary" id="closePresenceBtn">Close</button></div>`);
+    document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+    document.getElementById('closePresenceBtn').addEventListener('click',closeModal);
+  }));
+  document.getElementById('attDateFilter').addEventListener('change',e=>{S.attDateFilter=e.target.value; renderAttendance(content);});
+
+  content.querySelectorAll('.hr-approve-ot-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+    await sb.from('ot_requests').update({status:'Approved', hr_approved_at:new Date().toISOString()}).eq('id',btn.dataset.id);
+    toast('OT request approved.'); renderAttendance(content);
+  }));
+  content.querySelectorAll('.reject-ot-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    openModal(`
+      <div class="modal-tab-label">REJECT OT REQUEST</div>
+      <div class="modal-head"><div><h3>Reject OT Request</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Reason for Rejection <span style="color:var(--rose);">*</span></label>
+          <textarea id="ot_reject_reason" rows="3" placeholder="e.g. Not pre-approved, insufficient justification…" style="width:100%;padding:9px 11px;border:1px solid var(--line-strong);border-radius:var(--radius);font-size:13px;"></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-outline" id="cancelOTRejectBtn">Cancel</button>
+        <button class="btn btn-danger" id="confirmOTRejectBtn">Confirm Rejection</button>
+      </div>`);
+    document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+    document.getElementById('cancelOTRejectBtn').addEventListener('click',closeModal);
+    document.getElementById('confirmOTRejectBtn').addEventListener('click',async()=>{
+      const reason=document.getElementById('ot_reject_reason').value.trim();
+      if(!reason){toast('Please enter a reason for rejection.');return;}
+      await sb.from('ot_requests').update({status:'Rejected', rejection_reason:reason}).eq('id',btn.dataset.id);
+      closeModal(); toast('OT request rejected.'); renderAttendance(content);
+    });
+  }));
+
+  document.getElementById('exportAttBtn').addEventListener('click',()=>{
+    openExportModal({
+      title: 'Attendance Logs',
+      filters: [
+        {id:'name', label:'Employee Name (contains)', type:'text', placeholder:'e.g. Santos'},
+        {id:'from', label:'Date From', type:'date'},
+        {id:'to', label:'Date To', type:'date'},
+      ],
+      onExport: async (v)=>{
+        let lq = sb.from('attendance_logs').select('*').order('log_date',{ascending:false});
+        let oq = sb.from('ot_requests').select('*').order('ot_date',{ascending:false});
+        if(v.name) { lq=lq.ilike('emp_name',`%${v.name}%`); oq=oq.ilike('emp_name',`%${v.name}%`); }
+        if(v.from) { lq=lq.gte('log_date',v.from); oq=oq.gte('ot_date',v.from); }
+        if(v.to)   { lq=lq.lte('log_date',v.to);   oq=oq.lte('ot_date',v.to); }
+        const [{data:logs},{data:ots}] = await Promise.all([lq,oq]);
+        if(!logs?.length && !ots?.length){toast('No records found for the selected filters.');return;}
+        const exportMap = new Map();
+        (logs||[]).forEach(l => exportMap.set(`${l.emp_id}|${l.log_date}`, {...l, ot:null}));
+        (ots||[]).forEach(o => {
+          const key = `${o.emp_id}|${o.ot_date}`;
+          if(exportMap.has(key)) exportMap.get(key).ot = o;
+          else exportMap.set(key, { emp_id:o.emp_id, emp_name:o.emp_name, log_date:o.ot_date, time_in:null, time_out:null, ot:o });
+        });
+        const rows = Array.from(exportMap.values()).sort((a,b)=>(b.log_date||'').localeCompare(a.log_date||''));
+        const rangeLabel = v.from&&v.to ? `_${v.from}_to_${v.to}` : v.from ? `_from_${v.from}` : v.to ? `_to_${v.to}` : `_${csvDate()}`;
+        downloadCSV(`${S.company||'HRIS'}_attendance${rangeLabel}.csv`, toCSV(
+          ['Employee ID','Employee Name','Date','Time In','Time Out','Status','Hours Worked','OT Hours','OT Status'],
+          rows.map(l=>[l.emp_id,l.emp_name,l.log_date,l.time_in?fmtTime12(l.time_in):'',l.time_out?fmtTime12(l.time_out):'',l.time_in?(l.time_out?'Complete':'Incomplete'):'',computeWorkedHours(l.time_in,l.time_out)??'',l.ot?l.ot.hours:'',l.ot?l.ot.status:''])
+        )); toast(`${rows.length} attendance records exported.`);
+      }
+    });
+  });
+}
+
+function otStatusBadge(s){
+  return {
+    'Pending Supervisor':'badge-pending',
+    'Pending HR':'badge-leave',
+    'Approved':'badge-approved',
+    'Rejected':'badge-rejected'
+  }[s]||'badge-inactive';
 }
 
 function openRejectModal(leaveId, onDone){
@@ -3112,12 +3477,12 @@ async function renderEvaluation(content) {
     ${list.length===0?`<div class="empty-state"><h4>No evaluations yet</h4><p>Add the first performance evaluation.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Period</th><th>Att.</th><th>Quality</th><th>Teamwork</th><th>Initiative</th><th>Rating</th><th></th></tr></thead>
-      <tbody>${list.map(e=>`<tr>
+      <tbody>${list.map(e=>`<tr data-id="${e.id}" style="cursor:pointer;">
         <td><strong>${e.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${e.emp_id}</span></td>
         <td>${e.period||'—'}</td><td>${e.attendance||'—'}</td><td>${e.quality||'—'}</td><td>${e.teamwork||'—'}</td><td>${e.initiative||'—'}</td>
         <td><strong>${e.rating||'—'}</strong></td>
         <td style="white-space:nowrap;">
-          ${e.file_name?(e.file_name.startsWith('gdrive:')?`<a href="${e.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eval-btn" data-id="${e.id}" style="font-size:11px;">⬇ ${(e.file_name||'').slice(0,12)}</button> `):''}
+          ${e.file_name?(e.file_name.startsWith('gdrive:')?`<a href="${e.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eval-btn" data-id="${e.id}" style="font-size:11px;">⬇ ${(e.file_name||'').slice(0,12)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eval-btn" data-id="${e.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eval-btn" data-id="${e.id}">Delete</button>
         </td>
@@ -3149,14 +3514,16 @@ async function renderEvaluation(content) {
       }
     });
   });
-  content.querySelectorAll('.edit-eval-btn').forEach(btn=>btn.addEventListener('click',()=>openEvalForm(btn.dataset.id,content)));
-  content.querySelectorAll('.del-eval-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('evaluations').delete().eq('id',btn.dataset.id); toast('Evaluation deleted.'); renderEvaluation(content); }));
-  content.querySelectorAll('.dl-eval-btn').forEach(btn=>btn.addEventListener('click',async()=>{
-    const {data:e}=await sb.from('evaluations').select('file_data,file_name').eq('id',btn.dataset.id).single();
-    if(!e?.file_data) return;
-    const a=document.createElement('a'); a.href=e.file_data; a.download=e.file_name||'evaluation_file';
+  content.querySelectorAll('.edit-eval-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEvalForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-eval-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('evaluations').delete().eq('id',btn.dataset.id); toast('Evaluation deleted.'); renderEvaluation(content); }));
+  content.querySelectorAll('.dl-eval-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:e2}=await sb.from('evaluations').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!e2?.file_data) return;
+    const a=document.createElement('a'); a.href=e2.file_data; a.download=e2.file_name||'evaluation_file';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEvalForm(row.dataset.id,content)));
 }
 
 async function openEvalForm(evalId, content) {
@@ -3176,14 +3543,8 @@ async function openEvalForm(evalId, content) {
       <div class="field"><label>Evaluated By</label><input type="text" id="ev_by" value="${ev?.evaluator||S.admin?.name||''}"></div>
       <div class="field field-full"><label>Comments</label><textarea id="ev_comments" rows="2">${ev?.comments||''}</textarea></div>
       <div class="field field-full">
-        <label>Attach File <span style="font-weight:400;color:var(--muted);">(optional — e.g. evaluation form PDF)</span></label>
-        ${ev?.file_data
-          ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <span style="font-size:12px;color:var(--teal);">📎 ${ev.file_name||'file attached'}</span>
-              <button type="button" class="btn btn-danger btn-sm" id="rmEvalFileBtn" style="font-size:11px;">Remove</button>
-            </div>`
-          : ''}
-        <input type="file" id="ev_file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx" style="padding:6px;">
+        <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — e.g. evaluation form PDF)</span></label>
+        ${fileOrDriveInput('ev', ev?.file_data||null, ev?.file_name||null)}
       </div>
     </div></div>
     <div class="modal-foot"><button class="btn btn-outline" id="cancelEvalBtn">Cancel</button><button class="btn btn-primary" id="saveEvalBtn">${ev?'Save Changes':'Add Evaluation'}</button></div>`);
@@ -3230,7 +3591,7 @@ async function renderViolations(content) {
     ${list.length===0?`<div class="empty-state"><h4>No violations logged</h4><p>No disciplinary records on file.</p></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee</th><th>Type</th><th>Severity</th><th>Date</th><th>Action</th><th></th></tr></thead>
-      <tbody>${list.map(v=>`<tr>
+      <tbody>${list.map(v=>`<tr data-id="${v.id}" style="cursor:pointer;">
         <td><strong>${v.emp_name}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${v.emp_id}</span></td>
         <td>${v.type}</td>
         <td><span class="badge ${badgeClass(v.severity)}">${v.severity}</span></td>
@@ -3238,13 +3599,15 @@ async function renderViolations(content) {
         <td>${v.action||'—'}</td>
         <td style="white-space:nowrap;">
           ${v.file_data?`<button class="btn btn-outline btn-sm dl-viol-btn" data-id="${v.id}" data-name="${v.file_name||'file'}" style="font-size:11px;">⬇ ${(v.file_name||'file').slice(0,12)}</button> `:''}
+          ${v.file_name&&v.file_name.startsWith('gdrive:')?`<a href="${v.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:''}
+          <button class="btn btn-outline btn-sm edit-viol-btn" data-id="${v.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-viol-btn" data-id="${v.id}">Delete</button>
         </td>
       </tr>`).join('')}</tbody></table></div>`}`;
 
   let violSearchTimer;
   document.getElementById('violSearch').addEventListener('input',e=>{S.violSearch=e.target.value; clearTimeout(violSearchTimer); violSearchTimer=setTimeout(()=>renderViolations(content),300);});
-  document.getElementById('addViolBtn').addEventListener('click',()=>openViolForm(content));
+  document.getElementById('addViolBtn').addEventListener('click',()=>openViolForm(null,content));
   document.getElementById('exportViolBtn').addEventListener('click',()=>{
     openExportModal({
       title:'Violations',
@@ -3267,43 +3630,62 @@ async function renderViolations(content) {
       }
     });
   });
-  content.querySelectorAll('.del-viol-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('violations').delete().eq('id',btn.dataset.id); toast('Violation deleted.'); renderViolations(content); }));
-  content.querySelectorAll('.dl-viol-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+  content.querySelectorAll('.edit-viol-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openViolForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-viol-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('violations').delete().eq('id',btn.dataset.id); toast('Violation deleted.'); renderViolations(content); }));
+  content.querySelectorAll('.dl-viol-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
     const {data:v}=await sb.from('violations').select('file_data,file_name').eq('id',btn.dataset.id).single();
     if(!v?.file_data) return;
     const a=document.createElement('a'); a.href=v.file_data; a.download=v.file_name||'violation_file';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openViolForm(row.dataset.id,content)));
 }
 
-async function openViolForm(content) {
+async function openViolForm(violId, content) {
   const {data:emps}=await sb.from('employees').select('id,full_name').order('last_name');
+  let viol=null; if(violId){const{data}=await sb.from('violations').select('*').eq('id',violId).single();viol=data;}
   openModal(`
-    <div class="modal-tab-label">LOG VIOLATION</div>
-    <div class="modal-head"><div><h3>Log Violation</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+    <div class="modal-tab-label">${viol?'EDIT':'LOG'} VIOLATION</div>
+    <div class="modal-head"><div><h3>${viol?'Edit Violation':'Log Violation'}</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
     <div class="modal-body"><div class="form-grid">
-      <div class="field field-full"><label>Employee</label><select id="v_emp">${(emps||[]).map(e=>`<option value="${e.id}">${e.full_name} (${e.id})</option>`).join('')}</select></div>
-      <div class="field"><label>Violation Type</label><input type="text" id="v_type" placeholder="e.g. Tardiness, Insubordination"></div>
-      <div class="field"><label>Severity</label><select id="v_sev"><option>Minor</option><option>Major</option></select></div>
-      <div class="field"><label>Date</label><input type="date" id="v_date" value="${new Date().toISOString().slice(0,10)}"></div>
-      <div class="field field-full"><label>Action Taken</label><input type="text" id="v_action" placeholder="e.g. Verbal warning"></div>
-      <div class="field field-full"><label>Notes</label><textarea id="v_notes" rows="2"></textarea></div>
+      <div class="field field-full"><label>Employee</label><select id="v_emp" ${viol?'disabled':''}>${(emps||[]).map(e=>`<option value="${e.id}" ${viol?.emp_id===e.id?'selected':''}>${e.full_name} (${e.id})</option>`).join('')}</select></div>
+      <div class="field"><label>Violation Type</label><input type="text" id="v_type" value="${viol?.type||''}" placeholder="e.g. Tardiness, Insubordination"></div>
+      <div class="field"><label>Severity</label><select id="v_sev"><option ${viol?.severity==='Minor'?'selected':''}>Minor</option><option ${viol?.severity==='Major'?'selected':''}>Major</option></select></div>
+      <div class="field"><label>Date</label><input type="date" id="v_date" value="${viol?.date||new Date().toISOString().slice(0,10)}"></div>
+      <div class="field field-full"><label>Action Taken</label><input type="text" id="v_action" value="${viol?.action||''}" placeholder="e.g. Verbal warning"></div>
+      <div class="field field-full"><label>Notes</label><textarea id="v_notes" rows="2">${viol?.notes||''}</textarea></div>
       <div class="field field-full">
         <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — incident report, NTE)</span></label>
-        ${fileOrDriveInput('v', null, null)}
+        ${fileOrDriveInput('v', viol?.file_data||null, viol?.file_name||null)}
       </div>
     </div></div>
-    <div class="modal-foot"><button class="btn btn-outline" id="cancelViolBtn">Cancel</button><button class="btn btn-primary" id="saveViolBtn">Log Violation</button></div>`);
+    <div class="modal-foot">
+      ${viol?`<button class="btn btn-danger btn-sm" id="deleteViolInFormBtn" style="margin-right:auto;">Delete</button>`:''}
+      <button class="btn btn-outline" id="cancelViolBtn">Cancel</button><button class="btn btn-primary" id="saveViolBtn">${viol?'Save Changes':'Log Violation'}</button>
+    </div>`);
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelViolBtn').addEventListener('click',closeModal);
   wireFileTabs();
+  document.getElementById('deleteViolInFormBtn')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('deleteViolInFormBtn');
+    if(btn.dataset.confirming==='true'){
+      await sb.from('violations').delete().eq('id',violId);
+      closeModal(); toast('Violation deleted.'); renderViolations(content);
+    } else {
+      btn.dataset.confirming='true'; btn.textContent='Click again to confirm';
+      setTimeout(()=>{if(btn){btn.dataset.confirming='false';btn.textContent='Delete';}},3000);
+    }
+  });
   document.getElementById('saveViolBtn').addEventListener('click',async()=>{
-    const empId=document.getElementById('v_emp').value; const emp=(emps||[]).find(e=>e.id===empId);
+    const empId=viol?viol.emp_id:document.getElementById('v_emp').value; const emp=(emps||[]).find(e=>e.id===empId);
     const type=document.getElementById('v_type').value.trim(); if(!type){toast('Please enter a violation type.');return;}
     const btn=document.getElementById('saveViolBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
     const {fileData:vFileData, fileName:vFileName} = await getFileOrDriveValue('v');
-    await sb.from('violations').insert({id:`VL-${Date.now()}`,emp_id:empId,emp_name:emp?.full_name,type,severity:document.getElementById('v_sev').value,date:document.getElementById('v_date').value,action:document.getElementById('v_action').value.trim(),notes:document.getElementById('v_notes').value.trim(),file_data:vFileData,file_name:vFileName||null});
-    closeModal(); toast('Violation logged.'); renderViolations(content);
+    const payload = {emp_id:empId,emp_name:emp?.full_name||viol?.emp_name,type,severity:document.getElementById('v_sev').value,date:document.getElementById('v_date').value,action:document.getElementById('v_action').value.trim(),notes:document.getElementById('v_notes').value.trim()};
+    if(vFileData!==null||vFileName!==null){ payload.file_data=vFileData; payload.file_name=vFileName; }
+    if(viol){ await sb.from('violations').update(payload).eq('id',viol.id); } else { await sb.from('violations').insert({id:`VL-${Date.now()}`,...payload}); }
+    closeModal(); toast(viol?'Violation updated.':'Violation logged.'); renderViolations(content);
   });
 }
 
@@ -3362,15 +3744,21 @@ async function openDocChecklist(empId, empName) {
               </select>
             </td>
             <td style="padding:10px 4px;text-align:center;">
-              ${d.file_data
+              ${d.file_data || (d.file_name && d.file_name.startsWith('gdrive:'))
                 ? `<div style="display:flex;gap:4px;justify-content:center;">
-                    <button class="btn btn-outline btn-sm dl-doc-btn" data-id="${d.id}" data-name="${d.file_name||'document'}" style="font-size:11px;padding:4px 8px;">⬇ ${(d.file_name||'file').slice(0,10)}</button>
+                    ${d.file_name && d.file_name.startsWith('gdrive:')
+                      ? `<a href="${d.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;padding:4px 8px;">🔗 Drive</a>`
+                      : `<button class="btn btn-outline btn-sm dl-doc-btn" data-id="${d.id}" data-name="${d.file_name||'document'}" style="font-size:11px;padding:4px 8px;">⬇ ${(d.file_name||'file').slice(0,10)}</button>`
+                    }
                     <button class="btn btn-danger btn-sm rm-doc-btn" data-id="${d.id}" style="font-size:11px;padding:4px 8px;">✕</button>
                   </div>`
-                : `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11px;color:var(--muted);">
-                    📎 Attach
-                    <input type="file" class="doc-file-input" data-id="${d.id}" style="display:none;" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls">
-                  </label>`
+                : `<div style="display:flex;gap:4px;justify-content:center;">
+                    <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11px;color:var(--muted);">
+                      📎 Attach
+                      <input type="file" class="doc-file-input" data-id="${d.id}" style="display:none;" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls">
+                    </label>
+                    <button class="btn btn-outline btn-sm doc-drive-btn" data-id="${d.id}" style="font-size:11px;padding:4px 8px;">🔗 Drive Link</button>
+                  </div>`
               }
             </td>
           </tr>`).join('')}
@@ -3398,6 +3786,17 @@ async function openDocChecklist(empId, empName) {
         openDocChecklist(empId, empName); // refresh
       };
       reader.readAsDataURL(file);
+    });
+  });
+
+  // Handle Google Drive link attach
+  document.querySelectorAll('.doc-drive-btn').forEach(btn=>{
+    btn.addEventListener('click', async()=>{
+      const url = prompt('Paste the Google Drive shareable link:\n(Make sure it\'s set to "Anyone with the link can view")');
+      if(!url || !url.trim()) return;
+      await sb.from('documents').update({file_data:null, file_name:'gdrive:'+url.trim(), status:'Submitted', updated_at:new Date().toISOString()}).eq('id',btn.dataset.id);
+      toast('Google Drive link attached.');
+      openDocChecklist(empId, empName);
     });
   });
 
@@ -3446,12 +3845,13 @@ async function renderEmpHistory(content) {
     ${list.length===0?`<div class="empty-state"><h4>No records found</h4></div>`:`
     <div class="table-wrap"><table>
       <thead><tr><th>Employee ID</th><th>Full Name</th><th>Effective Date</th><th>Movement Type</th><th>Previous Details</th><th>New Details</th><th>Approved By</th><th>Remarks</th><th></th></tr></thead>
-      <tbody>${list.map(r=>`<tr>
+      <tbody>${list.map(r=>`<tr data-id="${r.id}" style="cursor:pointer;">
         <td class="mono">${r.emp_id}</td><td><strong>${r.emp_name||'—'}</strong></td>
         <td class="mono">${fmtDate(r.effective_date)}</td><td><span class="badge badge-active">${r.movement_type||'—'}</span></td>
         <td style="color:var(--muted);">${r.previous_details||'—'}</td><td><strong>${r.new_details||'—'}</strong></td>
         <td>${r.approved_by||'—'}</td><td style="color:var(--muted);">${r.remarks||'—'}</td>
         <td style="white-space:nowrap;">
+          ${r.file_name?(r.file_name.startsWith('gdrive:')?`<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> `:`<button class="btn btn-outline btn-sm dl-eh-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `):''}
           <button class="btn btn-outline btn-sm edit-eh-btn" data-id="${r.id}">Edit</button>
           <button class="btn btn-danger btn-sm del-eh-btn" data-id="${r.id}">Delete</button>
         </td>
@@ -3486,8 +3886,16 @@ async function renderEmpHistory(content) {
       }
     });
   });
-  content.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',()=>openEHForm(btn.dataset.id,content)));
-  content.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  content.querySelectorAll('.edit-eh-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();openEHForm(btn.dataset.id,content);}));
+  content.querySelectorAll('.del-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{ e.stopPropagation(); await sb.from('employment_history').delete().eq('id',btn.dataset.id); toast('Record deleted.'); renderEmpHistory(content); }));
+  content.querySelectorAll('.dl-eh-btn').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation();
+    const {data:r}=await sb.from('employment_history').select('file_data,file_name').eq('id',btn.dataset.id).single();
+    if(!r?.file_data) return;
+    const a=document.createElement('a'); a.href=r.file_data; a.download=r.file_name||'employment_record';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row=>row.addEventListener('click',()=>openEHForm(row.dataset.id,content)));
 }
 
 async function openEHForm(recordId, content) {
@@ -3504,16 +3912,27 @@ async function openEHForm(recordId, content) {
       <div class="field"><label>New Details</label><input type="text" id="eh_new" value="${rec?.new_details||''}" placeholder="e.g. Regular / Senior Sales Associate"></div>
       <div class="field"><label>Approved By</label><input type="text" id="eh_approved" value="${rec?.approved_by||S.admin?.name||''}"></div>
       <div class="field field-full"><label>Remarks</label><textarea id="eh_remarks" rows="2">${rec?.remarks||''}</textarea></div>
+      <div class="field field-full">
+        <label>Attach File or Link <span style="font-weight:400;color:var(--muted);">(optional — e.g. promotion memo, regularization report)</span></label>
+        ${fileOrDriveInput('eh', rec?.file_data||null, rec?.file_name||null)}
+      </div>
     </div></div>
     <div class="modal-foot"><button class="btn btn-outline" id="cancelEHBtn">Cancel</button><button class="btn btn-primary" id="saveEHBtn">${rec?'Save Changes':'Add Record'}</button></div>`);
   document.getElementById('closeModalBtn').addEventListener('click',closeModal);
   document.getElementById('cancelEHBtn').addEventListener('click',closeModal);
   wireOthers('eh_type');
+  wireFileTabs();
+  document.querySelector('.rm-file-btn[data-field="eh"]')?.addEventListener('click',async()=>{
+    await sb.from('employment_history').update({file_data:null,file_name:null}).eq('id',rec.id);
+    rec.file_data=null; rec.file_name=null; toast('File removed.'); openEHForm(rec.id,content);
+  });
   document.getElementById('saveEHBtn').addEventListener('click',async()=>{
     const sel=document.getElementById('eh_emp');
     const empId=sel.value, empName=rec?rec.emp_name:sel.options[sel.selectedIndex]?.dataset.name||'';
     const date=document.getElementById('eh_date').value; if(!date){toast('Please enter an effective date.');return;}
     const payload={emp_id:rec?rec.emp_id:empId,emp_name:empName,effective_date:date,movement_type:getOthersValue('eh_type'),previous_details:document.getElementById('eh_prev').value.trim(),new_details:document.getElementById('eh_new').value.trim(),approved_by:document.getElementById('eh_approved').value.trim(),remarks:document.getElementById('eh_remarks').value.trim()};
+    const {fileData:ehFD, fileName:ehFN} = await getFileOrDriveValue('eh');
+    if(ehFD!==null||ehFN!==null){ payload.file_data=ehFD; payload.file_name=ehFN; }
     if(rec){await sb.from('employment_history').update(payload).eq('id',rec.id);}else{await sb.from('employment_history').insert({id:`EH-${Date.now()}`,...payload});}
     closeModal(); toast(rec?'Record updated.':'Record added.'); renderEmpHistory(content);
   });
@@ -3660,7 +4079,7 @@ async function renderMedical(content) {
       <tbody>${filtered.map(r => {
         const st = medStatus(r);
         const cat = MEDICAL_CATEGORIES.find(c => c.name === r.category);
-        return `<tr>
+        return `<tr data-id="${r.id}" style="cursor:pointer;">
           <td><strong>${r.emp_name||'—'}</strong><br><span class="mono" style="font-size:11px;color:var(--muted);">${r.emp_id}</span></td>
           <td>${cat?.icon||'🏥'} ${r.category}</td>
           <td class="mono">${fmtDate(r.exam_date)}</td>
@@ -3668,7 +4087,7 @@ async function renderMedical(content) {
           <td><span class="badge ${medStatusBadge(st)}">${st}</span></td>
           <td style="font-size:12px;color:var(--muted);">${r.notes||'—'}</td>
           <td style="white-space:nowrap;">
-            ${r.file_name ? (r.file_name.startsWith('gdrive:') ? `<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">🔗 Drive</a> ` : `<button class="btn btn-outline btn-sm dl-med-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `) : ''}
+            ${r.file_name ? (r.file_name.startsWith('gdrive:') ? `<a href="${r.file_name.replace('gdrive:','')}" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;" onclick="event.stopPropagation()">🔗 Drive</a> ` : `<button class="btn btn-outline btn-sm dl-med-btn" data-id="${r.id}" style="font-size:11px;">⬇ ${(r.file_name||'').slice(0,10)}</button> `) : ''}
             <button class="btn btn-outline btn-sm edit-med-btn" data-id="${r.id}">Edit</button>
             <button class="btn btn-danger btn-sm del-med-btn" data-id="${r.id}">Delete</button>
           </td>
@@ -3683,17 +4102,20 @@ async function renderMedical(content) {
     medSearchTimer = setTimeout(() => renderMedical(content), 300);
   });
   document.getElementById('addMedBtn').addEventListener('click', () => openMedicalForm(null, content));
-  content.querySelectorAll('.edit-med-btn').forEach(btn => btn.addEventListener('click', () => openMedicalForm(btn.dataset.id, content)));
-  content.querySelectorAll('.dl-med-btn').forEach(btn => btn.addEventListener('click', async () => {
+  content.querySelectorAll('.edit-med-btn').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); openMedicalForm(btn.dataset.id, content); }));
+  content.querySelectorAll('.dl-med-btn').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
     const {data:r} = await sb.from('medical_records').select('file_data,file_name').eq('id', btn.dataset.id).single();
     if (!r?.file_data) return;
     const a = document.createElement('a'); a.href = r.file_data; a.download = r.file_name||'medical_record';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }));
-  content.querySelectorAll('.del-med-btn').forEach(btn => btn.addEventListener('click', async () => {
+  content.querySelectorAll('.del-med-btn').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
     await sb.from('medical_records').delete().eq('id', btn.dataset.id);
     toast('Record deleted.'); renderMedical(content);
   }));
+  content.querySelectorAll('tbody tr[data-id]').forEach(row => row.addEventListener('click', () => openMedicalForm(row.dataset.id, content)));
 }
 
 async function openMedicalForm(recordId, content) {
@@ -3892,6 +4314,30 @@ async function renderSettings(content) {
   content.innerHTML=`
     <div class="page-header"><p class="desc">Manage company profile, admin accounts, and system settings.</p></div>
 
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">MY ACCOUNT</div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+        ${S.admin?.photo?`<img src="${S.admin.photo}" class="myacct-photo-thumb" data-photo="${S.admin.photo}" data-name="${S.admin.name||''}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);cursor:pointer;">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(S.admin?.name||'?')}</div>`}
+        <div>
+          <div style="font-weight:600;font-size:14px;">${S.admin?.name||''}</div>
+          <div style="font-size:12px;color:var(--muted);">${S.admin?.role||''}</div>
+          <label style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer;padding:5px 10px;border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:11.5px;color:var(--muted);background:var(--card);">
+            📷 ${S.admin?.photo?'Change Photo':'Upload Photo'}
+            <input type="file" id="myPhotoUpload" accept="image/*" style="display:none;">
+          </label>
+          ${S.admin?.photo?`<button class="btn btn-danger btn-sm" id="myPhotoRemove" style="margin-left:6px;font-size:11px;">Remove</button>`:''}
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--line);padding-top:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;">Change My Password</div>
+        <div class="field"><label>Current Password</label><input type="password" id="myPassCurrent" placeholder="Current password"></div>
+        <div class="field"><label>New Password</label><input type="password" id="myPassNew" placeholder="New password"></div>
+        <div class="field"><label>Confirm New Password</label><input type="password" id="myPassConfirm" placeholder="Re-enter new password"></div>
+        <div id="myPassErr" style="display:none;" class="login-error"></div>
+        <button class="btn btn-primary btn-sm" id="saveMyPassBtn">Change Password</button>
+      </div>
+    </div>
+
     ${isSuperAdmin ? `
     <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
       <div class="record-tab">COMPANY PROFILE</div>
@@ -3906,6 +4352,22 @@ async function renderSettings(content) {
         <div id="cs_ok" style="display:none;" class="note-banner">&#10003; Settings saved.</div>
         <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
       </div>
+    </div>
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">WORK LOCATION (ATTENDANCE)</div>
+      <div style="margin-top:12px;">
+        <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.5;">Employees can only time in/out when physically within this radius of the work address.</p>
+        <div class="form-grid">
+          <div class="field"><label>Latitude</label><input type="text" id="cs_lat" value="${S.workLat??''}" placeholder="e.g. 15.037621"></div>
+          <div class="field"><label>Longitude</label><input type="text" id="cs_lng" value="${S.workLng??''}" placeholder="e.g. 120.686640"></div>
+        </div>
+        <div class="field"><label>Allowed Radius (meters)</label><input type="number" id="cs_radius" value="${S.workRadius||100}" min="10" max="5000"></div>
+        <button class="btn btn-outline btn-sm" id="useMyLocBtn" type="button">📍 Use My Current Location</button>
+        <div id="cs_loc_status" style="font-size:11.5px;color:var(--muted);margin-top:6px;"></div>
+        <div id="cs_loc_ok" style="display:none;margin-top:10px;" class="note-banner">&#10003; Work location saved.</div>
+        <button class="btn btn-primary" id="saveWorkLocBtn" style="margin-top:12px;">Save Work Location</button>
+        <button class="btn btn-outline" id="resetWorkLocBtn" style="margin-top:12px;">Reset</button>
+      </div>
     </div>` : `
     <div class="record-card" style="padding:18px 22px;max-width:520px;margin-bottom:24px;border:1px dashed var(--line-strong);">
       <div style="display:flex;align-items:center;gap:10px;">
@@ -3917,8 +4379,8 @@ async function renderSettings(content) {
       </div>
     </div>`}
 
-    <div class="section-label">Admin Accounts</div>
     ${isSuperAdmin ? `
+    <div class="section-label">Admin Accounts</div>
     <div class="table-wrap" style="max-width:680px;margin-bottom:12px;">
       <table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Module Access</th><th></th></tr></thead>
       <tbody>${adminList.map(a=>`<tr>
@@ -3931,21 +4393,46 @@ async function renderSettings(content) {
       </tr>`).join('')}</tbody></table>
     </div>
     <button class="btn btn-primary btn-sm" id="addAdminBtn">+ Add Admin Account</button>
-    ` : `
-    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Only Super Admins can add or manage admin accounts.</div>
-    <div class="table-wrap" style="max-width:680px;margin-bottom:12px;">
-      <table><thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead>
-      <tbody>${adminList.map(a=>`<tr>
-        <td><strong>${a.name}</strong></td><td class="mono">${a.username}</td><td>${a.role}</td>
-      </tr>`).join('')}</tbody></table>
-    </div>`}
+    ` : ''}
 
     ${isSuperAdmin ? `
     <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--line);max-width:520px;">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Danger Zone</div>
       <button class="btn btn-danger btn-sm" id="disconnectBtn">Disconnect Database</button>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Removes saved credentials from this browser and returns to the connection screen.</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;margin-bottom:16px;">Removes saved credentials from this browser and returns to the connection screen.</div>
+      <button class="btn btn-danger btn-sm" id="resetAllDataBtn">Reset All Data</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Permanently deletes all employees, leave, evaluations, violations, documents, employment history, medical records, attendance, and OT records — restoring the system to a blank setup. This cannot be undone.</div>
     </div>` : ''}`;
+
+  document.querySelector('.myacct-photo-thumb')?.addEventListener('click', e => {
+    openPhotoLightbox(e.target.dataset.photo, e.target.dataset.name);
+  });
+  document.getElementById('myPhotoUpload').addEventListener('change', e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      await sb.from('admin_accounts').update({photo:ev.target.result}).eq('id',S.admin.id);
+      S.admin.photo = ev.target.result; saveSession(); toast('Photo updated.'); renderSettings(content);
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('myPhotoRemove')?.addEventListener('click', async () => {
+    await sb.from('admin_accounts').update({photo:null}).eq('id',S.admin.id);
+    S.admin.photo = null; saveSession(); toast('Photo removed.'); renderSettings(content);
+  });
+  document.getElementById('saveMyPassBtn').addEventListener('click', async () => {
+    const curr=document.getElementById('myPassCurrent').value, n1=document.getElementById('myPassNew').value, n2=document.getElementById('myPassConfirm').value;
+    const errEl=document.getElementById('myPassErr');
+    errEl.style.display='none';
+    if(curr!==S.admin.password_hash){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+    if(!n1||n1.length<4){ errEl.textContent='New password must be at least 4 characters.'; errEl.style.display='block'; return; }
+    if(n1!==n2){ errEl.textContent='New passwords do not match.'; errEl.style.display='block'; return; }
+    const btn=document.getElementById('saveMyPassBtn'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+    await sb.from('admin_accounts').update({password_hash:n1}).eq('id',S.admin.id);
+    S.admin.password_hash=n1; toast('Password changed successfully.');
+    btn.disabled=false; btn.innerHTML='Change Password';
+    document.getElementById('myPassCurrent').value=''; document.getElementById('myPassNew').value=''; document.getElementById('myPassConfirm').value='';
+  });
 
   if(isSuperAdmin){
     let newLogoData='';
@@ -3969,6 +4456,47 @@ async function renderSettings(content) {
       const ok=document.getElementById('cs_ok'); ok.style.display='flex'; setTimeout(()=>{ok.style.display='none'; renderSettings(content);},1500);
       renderAdminShell();
     });
+    document.getElementById('useMyLocBtn')?.addEventListener('click', async()=>{
+      const statusEl=document.getElementById('cs_loc_status');
+      statusEl.textContent='Getting your current location…';
+      try{
+        const loc=await getCurrentLocation();
+        document.getElementById('cs_lat').value=loc.lat.toFixed(6);
+        document.getElementById('cs_lng').value=loc.lng.toFixed(6);
+        statusEl.textContent=`✓ Location captured (accuracy: ~${Math.round(loc.accuracy)}m). Review and click Save.`;
+      }catch(err){ statusEl.textContent='⚠ '+err.message; }
+    });
+    document.getElementById('saveWorkLocBtn')?.addEventListener('click', async()=>{
+      const lat=parseFloat(document.getElementById('cs_lat').value);
+      const lng=parseFloat(document.getElementById('cs_lng').value);
+      const radius=parseInt(document.getElementById('cs_radius').value)||100;
+      if(isNaN(lat)||isNaN(lng)){toast('Please enter a valid latitude and longitude, or use "Use My Current Location".');return;}
+      await Promise.all([
+        saveSetting('work_location_lat', String(lat)),
+        saveSetting('work_location_lng', String(lng)),
+        saveSetting('work_location_radius', String(radius))
+      ]);
+      S.workLat=lat; S.workLng=lng; S.workRadius=radius;
+      const ok=document.getElementById('cs_loc_ok'); ok.style.display='flex'; setTimeout(()=>{ok.style.display='none';},2000);
+      toast('Work location saved.');
+    });
+    document.getElementById('resetWorkLocBtn')?.addEventListener('click', async()=>{
+      const btn=document.getElementById('resetWorkLocBtn');
+      if(btn.dataset.confirming==='true'){
+        await Promise.all([
+          saveSetting('work_location_lat', ''),
+          saveSetting('work_location_lng', ''),
+          saveSetting('work_location_radius', '100')
+        ]);
+        S.workLat=null; S.workLng=null; S.workRadius=100;
+        toast('Work location reset. Employees cannot time in/out until it is set again.');
+        renderSettings(content);
+      } else {
+        btn.dataset.confirming='true'; btn.textContent='Click again to confirm';
+        btn.style.cssText='background:var(--rose);color:#fff;border-color:var(--rose);';
+        setTimeout(()=>{if(btn){btn.dataset.confirming='false';btn.textContent='Reset';btn.style.cssText='';}},3000);
+      }
+    });
     document.getElementById('addAdminBtn').addEventListener('click',()=>openAdminForm(null,content));
     content.querySelectorAll('.edit-admin-btn').forEach(btn=>btn.addEventListener('click',()=>openAdminForm(btn.dataset.id,content)));
     content.querySelectorAll('.del-admin-btn').forEach(btn=>btn.addEventListener('click',async()=>{ await sb.from('admin_accounts').delete().eq('id',btn.dataset.id); toast('Account deleted.'); renderSettings(content); }));
@@ -3983,6 +4511,48 @@ async function renderSettings(content) {
         setTimeout(()=>{if(btn){btn.dataset.confirming='false';btn.textContent='Disconnect Database';btn.style.cssText='';}},3000);
       }
     });
+    document.getElementById('resetAllDataBtn').addEventListener('click',()=>{
+      openModal(`
+        <div class="modal-tab-label">⚠️ RESET ALL DATA</div>
+        <div class="modal-head"><div><h3>Reset All Data</h3><div class="sub">This cannot be undone</div></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
+        <div class="modal-body">
+          <div class="note-banner" style="background:var(--rose-bg);border-color:var(--rose-border);color:var(--rose);">
+            This will <strong>permanently delete</strong> all Employees, Leave Requests, Evaluations, Violations, Documents, Employment History, Medical Records, Attendance Logs, and OT Requests. Company name/logo and admin accounts will be kept. This action cannot be undone.
+          </div>
+          <div class="field">
+            <label>Type <span class="mono" style="color:var(--rose);">RESET</span> to confirm</label>
+            <input type="text" id="reset_confirm_input" placeholder="Type RESET here" autocomplete="off">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-outline" id="cancelResetBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmResetBtn" disabled>Reset All Data</button>
+        </div>`);
+      document.getElementById('closeModalBtn').addEventListener('click',closeModal);
+      document.getElementById('cancelResetBtn').addEventListener('click',closeModal);
+      const confirmInput=document.getElementById('reset_confirm_input');
+      const confirmBtn=document.getElementById('confirmResetBtn');
+      confirmInput.addEventListener('input',()=>{ confirmBtn.disabled = confirmInput.value.trim()!=='RESET'; });
+      confirmBtn.addEventListener('click',async()=>{
+        confirmBtn.disabled=true; confirmBtn.innerHTML='<span class="spinner"></span> Resetting…';
+        try{
+          const tables=['ot_requests','attendance_logs','medical_records','documents','violations','evaluations','employment_history','leave_requests','employees'];
+          for(const t of tables){ await sb.from(t).delete().neq('id',''); }
+          await Promise.all([
+            saveSetting('work_location_lat',''),
+            saveSetting('work_location_lng',''),
+            saveSetting('work_location_radius','100'),
+            saveSetting('prorated_days_default','15')
+          ]);
+          closeModal();
+          toast('All data has been reset.');
+          S.page='dashboard'; renderAdminShell();
+        }catch(err){
+          toast('Reset failed: '+err.message);
+          confirmBtn.disabled=false; confirmBtn.innerHTML='Reset All Data';
+        }
+      });
+    });
   }
 }
 
@@ -3996,6 +4566,16 @@ async function openAdminForm(accountId, content) {
     <div class="modal-head"><div><h3>${acc?'Edit':'Add'} Admin Account</h3></div><button class="modal-close" id="closeModalBtn">&times;</button></div>
     <div class="modal-body"><div class="form-grid">
       <div class="field field-full"><label>Full Name</label><input type="text" id="aa_name" value="${acc?.name||''}" placeholder="e.g. Maria Santos"></div>
+      <div class="field field-full">
+        <label>Photo <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${acc?.photo?`<img src="${acc.photo}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid var(--line-strong);">`:`<div class="avatar" style="width:56px;height:56px;font-size:18px;">${ini(acc?.name||'?')}</div>`}
+          <div>
+            <input type="file" id="aa_photo" accept="image/*" style="font-size:12px;">
+            ${acc?.photo?`<button type="button" class="btn btn-danger btn-sm" id="aa_photo_remove" style="margin-top:6px;font-size:11px;">Remove Photo</button>`:''}
+          </div>
+        </div>
+      </div>
       <div class="field"><label>Username</label><input type="text" id="aa_user" value="${acc?.username||''}" placeholder="e.g. maria.santos" autocomplete="off"></div>
       <div class="field"><label>Role</label><select id="aa_role">${ROLES.map(r=>`<option ${acc?.role===r?'selected':''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>${acc?'New Password (blank = keep)':'Password'}</label><input type="password" id="aa_pass" autocomplete="new-password"></div>
@@ -4028,6 +4608,18 @@ async function openAdminForm(accountId, content) {
   roleEl.addEventListener('change',toggleModules);
   toggleModules();
 
+  let newPhotoData = acc?.photo || null;
+  document.getElementById('aa_photo').addEventListener('change', e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { newPhotoData = ev.target.result; };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('aa_photo_remove')?.addEventListener('click', () => {
+    newPhotoData = '';
+    toast('Photo will be removed when you save.');
+  });
+
   document.getElementById('saveAdminBtn').addEventListener('click',async()=>{
     const name=document.getElementById('aa_name').value.trim(), username=document.getElementById('aa_user').value.trim();
     const role=document.getElementById('aa_role').value, pass=document.getElementById('aa_pass').value, pass2=document.getElementById('aa_pass2').value;
@@ -4035,7 +4627,7 @@ async function openAdminForm(accountId, content) {
     if(!acc&&!pass){toast('Password is required for new accounts.');return;}
     if(pass&&pass!==pass2){toast('Passwords do not match.');return;}
     const selectedModules=[...document.querySelectorAll('.mod-check:checked')].map(cb=>cb.value).join(',');
-    const payload={name,username,role,modules:role==='Super Admin'?MODULES.join(','):selectedModules};
+    const payload={name,username,role,modules:role==='Super Admin'?MODULES.join(','):selectedModules, photo:newPhotoData||null};
     if(pass) payload.password_hash=pass;
     if(acc){await sb.from('admin_accounts').update(payload).eq('id',acc.id);}else{await sb.from('admin_accounts').insert(payload);}
     closeModal(); toast(acc?'Account updated.':'Account added.'); renderSettings(content);
@@ -4322,12 +4914,17 @@ async function renderEmpOverview(content, emp) {
     <div class="record-card" style="padding:18px 20px;max-width:560px;">
       <div class="record-tab">${emp.id}</div>
       <div class="detail-row"><span class="k">Status</span><span class="v"><span class="badge ${badgeClass(emp.status)}">${emp.status}</span></span></div>
+      <div class="detail-row"><span class="k">Job Status</span><span class="v">${emp.job_status||'—'}</span></div>
       <div class="detail-row"><span class="k">Email</span><span class="v">${emp.email||'—'}</span></div>
       <div class="detail-row"><span class="k">Phone</span><span class="v mono">${emp.phone||'—'}</span></div>
       <div class="detail-row"><span class="k">Address</span><span class="v" style="max-width:280px;text-align:right;">${emp.address||'—'}</span></div>
       <div class="detail-row"><span class="k">Hire Date</span><span class="v mono">${fmtDate(emp.hire_date)}</span></div>
       <div class="detail-row"><span class="k">Tenure</span><span class="v">${tenure} years</span></div>
       <div class="detail-row"><span class="k">Civil Status</span><span class="v">${emp.civil_status||'—'}</span></div>
+      <div class="detail-row"><span class="k">SSS Number</span><span class="v mono">${emp.sss_number||'—'}</span></div>
+      <div class="detail-row"><span class="k">PhilHealth Number</span><span class="v mono">${emp.philhealth_number||'—'}</span></div>
+      <div class="detail-row"><span class="k">Pag-IBIG Number</span><span class="v mono">${emp.pagibig_number||'—'}</span></div>
+      <div class="detail-row"><span class="k">TIN</span><span class="v mono">${emp.tin_number||'—'}</span></div>
       <div class="detail-row"><span class="k">Emergency Contact</span><span class="v" style="max-width:280px;text-align:right;">${emp.emergency_contact_name||emp.emergency_contact||'—'}${emp.emergency_contact_relation?' ('+emp.emergency_contact_relation+')':''}</span></div>
       ${emp.emergency_contact_phone?`<div class="detail-row"><span class="k">Contact Number</span><span class="v mono">${emp.emergency_contact_phone}</span></div>`:''}
     </div>
@@ -4558,15 +5155,6 @@ async function renderEmpAttendance(content, emp) {
       closeModal(); toast('OT request rejected.'); renderEmpAttendance(content, emp);
     });
   }));
-}
-
-function otStatusBadge(s){
-  return {
-    'Pending Supervisor':'badge-pending',
-    'Pending HR':'badge-leave',
-    'Approved':'badge-approved',
-    'Rejected':'badge-rejected'
-  }[s]||'badge-inactive';
 }
 
 function computeOTHours(startStr, endStr) {
