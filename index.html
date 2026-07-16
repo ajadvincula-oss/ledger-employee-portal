@@ -2147,6 +2147,15 @@ function startRealtime() {
         }
       });
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_requests' }, (payload) => {
+      showLiveToast('OT request updated');
+      debounceRefresh('ot', () => {
+        if (S.view === 'employee' && S.empPage === 'attendance') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpAttendance(content, S.employee);
+        }
+      });
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, (payload) => {
       showLiveToast('Leave updated');
       debounceRefresh('leave', () => {
