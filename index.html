@@ -1394,6 +1394,71 @@ function getCurrentLocation() {
     );
   });
 }
+// Opens the device camera (front-facing) so employees must take a live selfie
+// to time in/out — this makes GPS spoofing far less useful, since a photo of
+// the actual person at that moment is also required.
+function captureSelfie() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'user';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    let settled = false;
+    const cleanup = () => { if (input.parentNode) document.body.removeChild(input); };
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) { settled = true; cleanup(); resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload = e => { settled = true; cleanup(); resolve(e.target.result); };
+      reader.onerror = () => { settled = true; cleanup(); resolve(null); };
+      reader.readAsDataURL(file);
+    });
+    // Some browsers don't fire 'change' reliably on cancel — fall back via window focus.
+    window.addEventListener('focus', function onFocus() {
+      window.removeEventListener('focus', onFocus);
+      setTimeout(() => { if (!settled) { cleanup(); resolve(null); } }, 800);
+    }, { once: true });
+    input.click();
+  });
+}
+
+/* ==================== BACKGROUND PRESENCE CHECKS ==================== */
+// While an employee is clocked in (time_in set, no time_out) and has the
+// portal open, silently check their location every 15 minutes and log it.
+// This can only run while the browser tab / installed PWA is open — a
+// website cannot track location after the app is fully closed.
+const PRESENCE_CHECK_INTERVAL_MIN = 15;
+let presenceCheckTimer = null;
+
+function stopPresenceChecks() {
+  if (presenceCheckTimer) { clearInterval(presenceCheckTimer); presenceCheckTimer = null; }
+}
+
+function startPresenceChecks(emp, attendanceLogId) {
+  stopPresenceChecks();
+  if (S.workLat==null || S.workLng==null) return;
+  presenceCheckTimer = setInterval(async () => {
+    try {
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      await sb.from('presence_checks').insert({
+        id:`PC-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:todayStr(),
+        attendance_log_id:attendanceLogId, checked_at:new Date().toISOString(),
+        lat:loc.lat, lng:loc.lng, distance_m:Math.round(dist), within_radius: dist<=S.workRadius
+      });
+    } catch(e) { /* silent — user may have denied location or is offline; just skip this check */ }
+  }, PRESENCE_CHECK_INTERVAL_MIN*60*1000);
+}
+
+// Away time is approximated as (number of "outside radius" checks) × the
+// check interval — a light heuristic, not GPS-precise, but good enough to
+// flag employees who logged in then left for a long stretch.
+function computeAwayMinutes(checks) {
+  const awayCount = (checks||[]).filter(c=>!c.within_radius).length;
+  return awayCount * PRESENCE_CHECK_INTERVAL_MIN;
+}
 function fmtMoney(n) { return '₱' + (parseFloat(n)||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function pad(n) { return n.toString().padStart(2, '0'); }
 function badgeClass(s) { return {Active:'badge-active',Inactive:'badge-inactive','On Leave':'badge-leave',Pending:'badge-pending',Approved:'badge-approved',Rejected:'badge-rejected',Complete:'badge-complete',Missing:'badge-missing',Minor:'badge-minor',Major:'badge-major'}[s] || 'badge-inactive'; }
@@ -4224,7 +4289,7 @@ async function renderEmpShell() {
   empBackdropEl.addEventListener('click', closeEmpSidebar);
   shell.querySelectorAll('.nav-tab').forEach(btn=>btn.addEventListener('click',()=>{S.empPage=btn.dataset.page;closeEmpSidebar();renderEmpShell();}));
   document.getElementById('empLogout').addEventListener('click',()=>{
-    S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); S.view='landing'; render();
+    S.employee=null; S._notifShown=false; clearSession(); stopRealtime(); stopPresenceChecks(); S.view='landing'; render();
   });
   const content=document.getElementById('empContent');
   switch(S.empPage){
@@ -4318,6 +4383,13 @@ async function renderEmpAttendance(content, emp) {
   const pendingOTList = pendingOT||[];
   const hasWorkLoc = S.workLat!=null && S.workLng!=null;
 
+  // Start/stop silent background presence checks based on clock-in state
+  if (todayLog?.time_in && !todayLog?.time_out) {
+    startPresenceChecks(emp, todayLog.id);
+  } else {
+    stopPresenceChecks();
+  }
+
   content.innerHTML = `
     <div class="page-header"><p class="desc">Time in and time out — verified by your current location.</p></div>
     ${!hasWorkLoc ? `<div class="note-banner">⚠️ Work location has not been configured yet by HR. Please contact HR before timing in.</div>` : ''}
@@ -4399,10 +4471,20 @@ async function renderEmpAttendance(content, emp) {
         btn.disabled=false; btn.innerHTML='📍 Time In';
         return;
       }
+      btn.innerHTML='<span class="spinner"></span> Opening camera…';
+      const selfie = await captureSelfie();
+      if(!selfie){
+        statusEl.innerHTML = '⚠️ A live selfie is required to time in. Please try again and take the photo.';
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time In';
+        return;
+      }
+      btn.innerHTML='<span class="spinner"></span> Saving…';
       const {error} = await sb.from('attendance_logs').insert({
         id:`ATT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:today,
         time_in:new Date().toISOString(), time_in_lat:loc.lat, time_in_lng:loc.lng,
-        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:Math.round(dist)
+        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:Math.round(dist),
+        time_in_photo:selfie
       });
       if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time In'; return; }
       toast('Timed in successfully!'); renderEmpAttendance(content, emp);
@@ -4424,9 +4506,19 @@ async function renderEmpAttendance(content, emp) {
         btn.disabled=false; btn.innerHTML='📍 Time Out';
         return;
       }
+      btn.innerHTML='<span class="spinner"></span> Opening camera…';
+      const selfie = await captureSelfie();
+      if(!selfie){
+        statusEl.innerHTML = '⚠️ A live selfie is required to time out. Please try again and take the photo.';
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time Out';
+        return;
+      }
+      btn.innerHTML='<span class="spinner"></span> Saving…';
       const {error} = await sb.from('attendance_logs').update({
         time_out:new Date().toISOString(), time_out_lat:loc.lat, time_out_lng:loc.lng,
-        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:Math.round(dist)
+        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:Math.round(dist),
+        time_out_photo:selfie
       }).eq('id', todayLog.id);
       if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time Out'; return; }
       toast('Timed out successfully!'); renderEmpAttendance(content, emp);
