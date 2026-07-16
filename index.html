@@ -1164,6 +1164,9 @@ const S = { // app state
   company: '',
   logo: '',
   proratedDefault: 15,
+  workLat: null,
+  workLng: null,
+  workRadius: 100,
   adminLoginError: '',
   empLoginError: '',
   empSearch: '',
@@ -1325,6 +1328,9 @@ async function loadCompanySettings() {
       if (r.key === 'company_name') S.company = r.value || '';
       if (r.key === 'company_logo') S.logo = r.value || '';
       if (r.key === 'prorated_days_default') S.proratedDefault = parseInt(r.value) || 15;
+      if (r.key === 'work_location_lat') S.workLat = r.value ? parseFloat(r.value) : null;
+      if (r.key === 'work_location_lng') S.workLng = r.value ? parseFloat(r.value) : null;
+      if (r.key === 'work_location_radius') S.workRadius = parseInt(r.value) || 100;
     });  } catch(e) {}
 }
 
@@ -1358,6 +1364,26 @@ function renderPage() { renderAdminShell(); }
 
 /* ==================== UTILS ==================== */
 function fmtDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', {month:'short', day:'2-digit', year:'numeric'}); }
+function fmtTime12(ts) { if (!ts) return '—'; return new Date(ts).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true}); }
+function todayStr() { return new Date().toISOString().slice(0,10); }
+// Haversine formula — distance in meters between two lat/lng points
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('Geolocation is not supported on this device/browser.')); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      err => reject(new Error(err.message || 'Could not get your location. Please enable location access.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
 function fmtMoney(n) { return '₱' + (parseFloat(n)||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function pad(n) { return n.toString().padStart(2, '0'); }
 function badgeClass(s) { return {Active:'badge-active',Inactive:'badge-inactive','On Leave':'badge-leave',Pending:'badge-pending',Approved:'badge-approved',Rejected:'badge-rejected',Complete:'badge-complete',Missing:'badge-missing',Minor:'badge-minor',Major:'badge-major'}[s] || 'badge-inactive'; }
@@ -2102,6 +2128,15 @@ function startRealtime() {
   }
 
   realtimeChannel = sb.channel('ledger-hris-live')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_logs' }, (payload) => {
+      showLiveToast('Attendance updated');
+      debounceRefresh('attendance', () => {
+        if (S.view === 'employee' && S.empPage === 'attendance') {
+          const content = document.getElementById('empContent');
+          if (content && S.employee) renderEmpAttendance(content, S.employee);
+        }
+      });
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, (payload) => {
       showLiveToast('Leave updated');
       debounceRefresh('leave', () => {
@@ -3915,7 +3950,7 @@ async function openAdminForm(accountId, content) {
 }
 
 /* ==================== EMPLOYEE SELF-SERVICE ==================== */
-const EMP_NAV=[{key:'overview',label:'My Profile'},{key:'leave',label:'My Leave'},{key:'evaluation',label:'My Evaluation'},{key:'documents',label:'My Documents'},{key:'violations',label:'My Violations'},{key:'history',label:'Employment History'}];
+const EMP_NAV=[{key:'overview',label:'My Profile'},{key:'attendance',label:'My Attendance'},{key:'leave',label:'My Leave'},{key:'evaluation',label:'My Evaluation'},{key:'documents',label:'My Documents'},{key:'violations',label:'My Violations'},{key:'history',label:'Employment History'}];
 
 /* ==================== BIRTHDAY GREETING ==================== */
 function showBirthdayGreeting(emp) {
@@ -4166,6 +4201,7 @@ async function renderEmpShell() {
   const content=document.getElementById('empContent');
   switch(S.empPage){
     case 'overview':   await renderEmpOverview(content,emp); break;
+    case 'attendance': await renderEmpAttendance(content,emp); break;
     case 'leave':      await renderEmpLeave(content,emp); break;
     case 'evaluation': await renderEmpEval(content,emp); break;
     case 'documents':  await renderEmpDocs(content,emp); break;
@@ -4237,6 +4273,98 @@ async function renderEmpOverview(content, emp) {
       await sb.from('employees').update({pin:n1}).eq('id',emp.id);
       S.employee.pin=n1; closeModal(); toast('PIN changed successfully.');
     });
+  });
+}
+
+async function renderEmpAttendance(content, emp) {
+  loading(content);
+  const today = todayStr();
+  const {data:todayLog} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).eq('log_date',today).maybeSingle();
+  const {data:history} = await sb.from('attendance_logs').select('*').eq('emp_id',emp.id).order('log_date',{ascending:false}).limit(30);
+  const list = history||[];
+  const hasWorkLoc = S.workLat!=null && S.workLng!=null;
+
+  content.innerHTML = `
+    <div class="page-header"><p class="desc">Time in and time out — verified by your current location.</p></div>
+    ${!hasWorkLoc ? `<div class="note-banner">⚠️ Work location has not been configured yet by HR. Please contact HR before timing in.</div>` : ''}
+    <div class="record-card" style="padding:22px 24px;max-width:520px;margin-bottom:24px;">
+      <div class="record-tab">${fmtDate(today)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div class="detail-row" style="border:none;padding:6px 0;"><span class="k">Time In</span><span class="v mono">${todayLog?.time_in?fmtTime12(todayLog.time_in):'— not yet —'}</span></div>
+          <div class="detail-row" style="border:none;padding:6px 0;"><span class="k">Time Out</span><span class="v mono">${todayLog?.time_out?fmtTime12(todayLog.time_out):'— not yet —'}</span></div>
+        </div>
+        <div>
+          ${!todayLog || !todayLog.time_in
+            ? `<button class="btn btn-primary" id="timeInBtn" ${!hasWorkLoc?'disabled':''}>📍 Time In</button>`
+            : !todayLog.time_out
+            ? `<button class="btn btn-primary" id="timeOutBtn" ${!hasWorkLoc?'disabled':''}>📍 Time Out</button>`
+            : `<span class="badge badge-approved">✓ Complete for today</span>`
+          }
+        </div>
+      </div>
+      <div id="att_status" style="font-size:12px;color:var(--muted);margin-top:10px;"></div>
+    </div>
+
+    <div class="section-label">Recent Attendance</div>
+    ${list.length===0?`<div class="empty-state"><h4>No attendance logs yet</h4></div>`:`
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr></thead>
+      <tbody>${list.map(l=>`<tr>
+        <td class="mono">${fmtDate(l.log_date)}</td>
+        <td class="mono">${fmtTime12(l.time_in)}</td>
+        <td class="mono">${l.time_out?fmtTime12(l.time_out):'—'}</td>
+        <td><span class="badge ${l.time_out?'badge-approved':'badge-pending'}">${l.time_out?'Complete':'Incomplete'}</span></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+
+  document.getElementById('timeInBtn')?.addEventListener('click', async()=>{
+    const btn=document.getElementById('timeInBtn'); const statusEl=document.getElementById('att_status');
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
+    try{
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(dist > S.workRadius){
+        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time in.`;
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time In';
+        return;
+      }
+      const {error} = await sb.from('attendance_logs').insert({
+        id:`ATT-${Date.now()}`, emp_id:emp.id, emp_name:emp.full_name, log_date:today,
+        time_in:new Date().toISOString(), time_in_lat:loc.lat, time_in_lng:loc.lng,
+        time_in_accuracy_m:Math.round(loc.accuracy), time_in_distance_m:Math.round(dist)
+      });
+      if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time In'; return; }
+      toast('Timed in successfully!'); renderEmpAttendance(content, emp);
+    }catch(err){
+      statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
+      btn.disabled=false; btn.innerHTML='📍 Time In';
+    }
+  });
+
+  document.getElementById('timeOutBtn')?.addEventListener('click', async()=>{
+    const btn=document.getElementById('timeOutBtn'); const statusEl=document.getElementById('att_status');
+    btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Getting location…';
+    try{
+      const loc = await getCurrentLocation();
+      const dist = distanceMeters(loc.lat, loc.lng, S.workLat, S.workLng);
+      if(dist > S.workRadius){
+        statusEl.innerHTML = `⚠️ You're ${Math.round(dist)}m away from the office. You must be within ${S.workRadius}m to time out.`;
+        statusEl.style.color = 'var(--rose)';
+        btn.disabled=false; btn.innerHTML='📍 Time Out';
+        return;
+      }
+      const {error} = await sb.from('attendance_logs').update({
+        time_out:new Date().toISOString(), time_out_lat:loc.lat, time_out_lng:loc.lng,
+        time_out_accuracy_m:Math.round(loc.accuracy), time_out_distance_m:Math.round(dist)
+      }).eq('id', todayLog.id);
+      if(error){ toast('Error: '+error.message); btn.disabled=false; btn.innerHTML='📍 Time Out'; return; }
+      toast('Timed out successfully!'); renderEmpAttendance(content, emp);
+    }catch(err){
+      statusEl.innerHTML = '⚠️ '+err.message; statusEl.style.color='var(--rose)';
+      btn.disabled=false; btn.innerHTML='📍 Time Out';
+    }
   });
 }
 
