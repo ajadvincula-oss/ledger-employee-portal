@@ -1,6 +1,6 @@
 {
   "name": "Ledger HRIS — Employee Portal",
-  "short_name": "Ledger HRIS",
+  "short_name": "HRIS Employee",
   "description": "Premierlabs Corporation — Employee Self-Service Portal",
   "start_url": "./",
   "scope": "./",
